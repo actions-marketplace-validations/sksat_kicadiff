@@ -101,8 +101,9 @@ if [[ -z "$OUTPUT_DIR" ]]; then
 fi
 mkdir -p "$OUTPUT_DIR/before" "$OUTPUT_DIR/after"
 
-# ファイル名をサニタイズ（パス区切り・シングルクォート等を _ に）
-SAFE_NAME=$(echo "$REL_PATH" | tr "/' " '___')
+# ファイル名をサニタイズ（英数字・ドット・ハイフン・アンダースコア以外を _ に置換）
+# glob 展開やシェル特殊文字（$, `, [, ] 等）を含むパスでも安全に扱えるようにする
+SAFE_NAME=$(echo "$REL_PATH" | sed 's/[^a-zA-Z0-9._-]/_/g')
 
 AFTER_SVG="$OUTPUT_DIR/after/${SAFE_NAME}.svg"
 AFTER_PNG="$OUTPUT_DIR/after/${SAFE_NAME}.png"
@@ -129,6 +130,7 @@ trap cleanup EXIT
 # =============================================================================
 
 # PCB 全レイヤー結合画像
+# stdout は進捗メッセージ("Plotted to ...")なので抑制、stderr は診断用に通す
 render_pcb() {
   local input="$1" output_svg="$2"
   kicad-cli pcb export svg \
@@ -137,7 +139,7 @@ render_pcb() {
     --page-size-mode 2 \
     --exclude-drawing-sheet \
     -o "$output_svg" \
-    "$input" >/dev/null 2>&1
+    "$input" >/dev/null
 }
 
 # PCB レイヤー別画像（--mode-multi で一括エクスポート）
@@ -151,7 +153,7 @@ render_pcb_layers() {
     --page-size-mode 2 \
     --exclude-drawing-sheet \
     -o "$output_dir/" \
-    "$input" >/dev/null 2>&1
+    "$input" >/dev/null
   # SVG → PNG 変換（RGBA で透過を維持）
   for svg in "$output_dir"/*.svg; do
     [[ -f "$svg" ]] || continue
@@ -165,7 +167,7 @@ render_sch() {
     --exclude-drawing-sheet \
     --no-background-color \
     -o "$output_dir" \
-    "$input" >/dev/null 2>&1
+    "$input" >/dev/null
 
   # kicad-cli sch export svg は出力ファイル名を入力ファイル名から自動決定するのでリネーム
   local base_name
@@ -208,8 +210,9 @@ fi
 # =============================================================================
 HAS_BEFORE=false
 if [[ -n "$REPO_ROOT" ]] && git -C "$REPO_ROOT" cat-file -e "HEAD:$REL_PATH" 2>/dev/null; then
-  # mktemp で一時ファイルを作成（同ディレクトリ内、拡張子を維持）
-  TEMP_BEFORE=$(mktemp -p "$(dirname "$FILE_PATH")" "_preview_before_XXXXXX_$(basename "$FILE_PATH")")
+  # mktemp で一時ファイルを作成（同ディレクトリ内）
+  # --suffix で拡張子を維持し、XXXXXX をテンプレート末尾に置くことでポータブルに動作させる
+  TEMP_BEFORE=$(mktemp -p "$(dirname "$FILE_PATH")" --suffix=".$(basename "$FILE_PATH")" "_preview_XXXXXX")
   git -C "$REPO_ROOT" show "HEAD:$REL_PATH" > "$TEMP_BEFORE"
 
   if [[ "$FILE_TYPE" == "pcb" ]]; then

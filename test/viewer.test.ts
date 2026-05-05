@@ -8,11 +8,10 @@ const DIFF_HTML = path.join(
   "PicoBridge_pcb_PicoBridge.kicad_pcb_diff.html"
 );
 
+// Skip all tests if fixtures are not generated (e.g. CI without KiCad)
+test.skip(() => !fs.existsSync(DIFF_HTML), "fixture not found");
+
 test.beforeEach(async ({ page }) => {
-  if (!fs.existsSync(DIFF_HTML)) {
-    test.skip();
-    return;
-  }
   await page.goto(`file://${DIFF_HTML}`);
   // Wait for init() to complete
   await page.waitForSelector("#view-sbs.active");
