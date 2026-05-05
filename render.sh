@@ -10,7 +10,7 @@
 # 依存ツール:
 #   - kicad-cli (KiCad 10+): SVG エクスポート
 #   - rsvg-convert (librsvg): SVG → PNG 変換
-#   - magick (ImageMagick 7+): 差分ハイライト画像生成
+#   - magick (ImageMagick 7+): 差分ハイライト画像生成 (optional)
 #   - python3: マニフェスト JSON 生成
 #
 # 出力:
@@ -23,7 +23,19 @@ set -euo pipefail
 
 VIEWER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# --- 引数パース ---
+# =============================================================================
+# 依存ツールチェック
+# =============================================================================
+for cmd in kicad-cli rsvg-convert python3; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: required command not found: $cmd" >&2
+    exit 1
+  fi
+done
+
+# =============================================================================
+# 引数パース
+# =============================================================================
 FILE_PATH="${1:-}"
 OUTPUT_DIR=""
 IMAGES_ONLY=false
@@ -31,9 +43,18 @@ IMAGES_ONLY=false
 shift || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    --output-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --output-dir requires a value" >&2
+        exit 1
+      fi
+      OUTPUT_DIR="$2"; shift 2
+      ;;
     --images-only) IMAGES_ONLY=true; shift ;;
-    *) shift ;;
+    *)
+      echo "Warning: unknown option: $1" >&2
+      shift
+      ;;
   esac
 done
 
@@ -80,8 +101,8 @@ if [[ -z "$OUTPUT_DIR" ]]; then
 fi
 mkdir -p "$OUTPUT_DIR/before" "$OUTPUT_DIR/after"
 
-# ファイル名をサニタイズ（パス区切りを _ に）
-SAFE_NAME=$(echo "$REL_PATH" | tr '/' '_')
+# ファイル名をサニタイズ（パス区切り・シングルクォート等を _ に）
+SAFE_NAME=$(echo "$REL_PATH" | tr "/' " '___')
 
 AFTER_SVG="$OUTPUT_DIR/after/${SAFE_NAME}.svg"
 AFTER_PNG="$OUTPUT_DIR/after/${SAFE_NAME}.png"
@@ -90,6 +111,18 @@ BEFORE_PNG="$OUTPUT_DIR/before/${SAFE_NAME}.png"
 
 # エクスポート対象レイヤー
 PCB_LAYERS="F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,Edge.Cuts"
+
+# =============================================================================
+# 一時ファイルのクリーンアップ用 trap
+# kicad-cli 失敗時等にゴミが残らないようにする
+# =============================================================================
+TEMP_BEFORE=""
+cleanup() {
+  if [[ -n "$TEMP_BEFORE" && -f "$TEMP_BEFORE" ]]; then
+    rm -f "$TEMP_BEFORE"
+  fi
+}
+trap cleanup EXIT
 
 # =============================================================================
 # レンダリング関数
@@ -122,7 +155,7 @@ render_pcb_layers() {
   # SVG → PNG 変換（RGBA で透過を維持）
   for svg in "$output_dir"/*.svg; do
     [[ -f "$svg" ]] || continue
-    rsvg-convert -w 1600 "$svg" -o "${svg%.svg}.png" 2>/dev/null
+    rsvg-convert -w 1600 "$svg" -o "${svg%.svg}.png"
   done
 }
 
@@ -146,7 +179,7 @@ render_sch() {
 svg_to_png() {
   local svg="$1" png="$2"
   if [[ -f "$svg" ]]; then
-    rsvg-convert -w 1600 "$svg" -o "$png" 2>/dev/null
+    rsvg-convert -w 1600 "$svg" -o "$png"
   fi
 }
 
@@ -162,15 +195,21 @@ fi
 
 svg_to_png "$AFTER_SVG" "$AFTER_PNG"
 
+if [[ ! -f "$AFTER_PNG" ]]; then
+  echo "Error: failed to render $FILE_PATH" >&2
+  exit 1
+fi
+
 # =============================================================================
 # Before 状態のレンダリング（git HEAD から取得）
 # 一時ファイルは元ファイルと同じディレクトリに置く。
 # /tmp だと .kicad_pro や fp-lib-table の相対パス参照が解決できないため。
-# ファイル名はドットで始めない（*.svg glob がマッチしなくなるため）。
+# mktemp を使い、予測可能なファイル名による symlink 攻撃を防ぐ。
 # =============================================================================
 HAS_BEFORE=false
 if [[ -n "$REPO_ROOT" ]] && git -C "$REPO_ROOT" cat-file -e "HEAD:$REL_PATH" 2>/dev/null; then
-  TEMP_BEFORE="$(dirname "$FILE_PATH")/_preview_before_$(basename "$FILE_PATH")"
+  # mktemp で一時ファイルを作成（同ディレクトリ内、拡張子を維持）
+  TEMP_BEFORE=$(mktemp -p "$(dirname "$FILE_PATH")" "_preview_before_XXXXXX_$(basename "$FILE_PATH")")
   git -C "$REPO_ROOT" show "HEAD:$REL_PATH" > "$TEMP_BEFORE"
 
   if [[ "$FILE_TYPE" == "pcb" ]]; then
@@ -181,6 +220,7 @@ if [[ -n "$REPO_ROOT" ]] && git -C "$REPO_ROOT" cat-file -e "HEAD:$REL_PATH" 2>/
   fi
 
   rm -f "$TEMP_BEFORE"
+  TEMP_BEFORE=""
 
   if [[ -f "$BEFORE_SVG" ]]; then
     svg_to_png "$BEFORE_SVG" "$BEFORE_PNG"
@@ -215,15 +255,17 @@ fi
 # =============================================================================
 # マニフェスト JSON 生成
 # viewer.html が読み込むデータ。画像パスはすべて HTML からの相対パス。
+# 変数は sys.argv 経由で渡し、シェル変数のコード注入を防ぐ。
 # =============================================================================
-MANIFEST=$(python3 -c "
-import json, glob, os
+MANIFEST=$(python3 - "$SAFE_NAME" "$FILE_TYPE" "$HAS_BEFORE" "$OUTPUT_DIR" "$DIFF_PNG" "$REL_PATH" <<'PYEOF'
+import json, glob, os, sys
 
-safe = '$SAFE_NAME'
-file_type = '$FILE_TYPE'
-has_before = '$HAS_BEFORE' == 'true'
-output_dir = '$OUTPUT_DIR'
-diff_png = '$DIFF_PNG'
+safe = sys.argv[1]
+file_type = sys.argv[2]
+has_before = sys.argv[3] == 'true'
+output_dir = sys.argv[4]
+diff_png = sys.argv[5]
+rel_path = sys.argv[6]
 
 def layer_map(layers_dir, side):
     result = {}
@@ -238,7 +280,7 @@ def layer_map(layers_dir, side):
     return result
 
 m = {
-    'file': '$REL_PATH',
+    'file': rel_path,
     'type': file_type,
     'hasBefore': has_before,
     'after': {
@@ -257,14 +299,17 @@ if diff_png and os.path.isfile(diff_png):
     m['diff'] = f'diff/{safe}.png'
 
 print(json.dumps(m))
-")
+PYEOF
+)
 
 # =============================================================================
 # HTML 生成（viewer.html テンプレートにマニフェストを注入）
+# </script> が JSON 内に含まれるケースに備え、</ をエスケープする
 # =============================================================================
 DIFF_HTML="$OUTPUT_DIR/${SAFE_NAME}_diff.html"
+ESCAPED_MANIFEST=$(echo "$MANIFEST" | sed 's|</|<\\/|g')
 {
-  echo "<script>window.MANIFEST = $MANIFEST;</script>"
+  echo "<script>window.MANIFEST = $ESCAPED_MANIFEST;</script>"
   cat "$VIEWER_DIR/viewer.html"
 } > "$DIFF_HTML"
 

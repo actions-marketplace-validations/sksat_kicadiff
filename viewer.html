@@ -326,8 +326,9 @@ function makePane(side, label) {
 }
 
 /* Build a stack of layer images for one side (before or after).
-   The first visible image is position:static (acts as sizer for the container).
-   All other images are position:absolute, stacked via z-index. */
+   All layer images start with .layer class (position:absolute).
+   applyLayers() promotes the first visible one to position:static (sizer)
+   so the container gets its dimensions from the image. */
 function makeLayerStack(side, id) {
   const data = M[side];
   const stack = document.createElement('div');
@@ -341,12 +342,13 @@ function makeLayerStack(side, id) {
       img.className = 'layer';
       img.dataset.layer = name; img.dataset.side = side;
       img.style.zIndex = i + 1;
-      if (i === 0) img.classList.remove('layer');
+      img.onerror = () => { img.style.display = 'none'; };
       stack.appendChild(img);
     });
   } else {
     const img = document.createElement('img');
     img.src = data.combined;
+    img.onerror = () => { img.style.display = 'none'; };
     stack.appendChild(img);
   }
 
