@@ -6,13 +6,13 @@
 body{background:#1e1e1e;color:#ccc;font-family:system-ui,sans-serif;font-size:13px;overflow:hidden;height:100vh;display:flex;flex-direction:column}
 header{display:flex;align-items:center;gap:12px;padding:6px 12px;background:#252526;border-bottom:1px solid #3c3c3c;flex-shrink:0}
 header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tabs{display:flex;gap:2px;margin-left:auto;flex-shrink:0}
+.tabs{display:flex;gap:2px;flex-shrink:0}
 .tabs button{padding:4px 10px;background:#333;border:1px solid #555;color:#ccc;cursor:pointer;font-size:12px;border-radius:3px}
 .tabs button.active{background:#007acc;border-color:#007acc;color:#fff}
-/* Header-extras hosts secondary controls (diff highlight toggle, etc.) on
-   the same row as the title and view tabs. Margin-left keeps it tight to
-   the right edge after the .tabs auto-margin pushes things right. */
-.header-extras{display:flex;align-items:center;gap:12px;flex-shrink:0;font-size:12px}
+/* Header-extras hosts secondary controls (diff highlight toggle, etc.). It
+   gets margin-left:auto so the remaining row content (extras + view-tabs)
+   is right-aligned, while the row order stays Title → Extras → Tabs. */
+.header-extras{display:flex;align-items:center;gap:12px;flex-shrink:0;font-size:12px;margin-left:auto}
 .header-extras label{display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap}
 
 /* --- Layer panel (KiCad/Photoshop style) ---
@@ -55,7 +55,14 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
 .pane-label{font-size:11px;font-weight:600;padding:3px 8px;text-align:center;flex-shrink:0}
 .pane-label.before{background:#3e2020;color:#f48771}
 .pane-label.after{background:#203e20;color:#89d185}
-.pane-body{flex:1;overflow:auto;display:flex;justify-content:center;padding:4px}
+/* pane-body is the scroll viewport. We use display:flex so the layer-stack
+   gets stretched vertically (align-items:stretch is the flex default) — this
+   matches the previous layout where the wrap's bounding box was the body
+   height, with overflowing image content scrolling. justify-content stays
+   at its flex-start default so zoom > 1 leaves scrollbar reach to the
+   image's left edge (justify-content:center would clip pan range). */
+.pane-body{flex:1;overflow:auto;padding:4px;display:flex}
+.pane-body > .layer-stack{width:calc(var(--zoom,1) * 100%);flex-shrink:0}
 
 /* --- Layer stack ---
    Layers are stacked with position:absolute. The first visible layer stays
@@ -64,26 +71,28 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
    preventing bleed-through in overlay/swipe modes.
    isolation:isolate contains layer z-indexes within the stack.
    PCB uses dark (#1e1e1e); schematic uses light (#f5f5f5) to match
-   KiCad's native schematic background. body[data-type] is set at init time. */
-.layer-stack{position:relative;display:inline-block;background:#1e1e1e;isolation:isolate}
+   KiCad's native schematic background. body[data-type] is set at init time.
+   --zoom (CSS var, default 1) scales the rendered area: it's applied to
+   .pane-body's direct .layer-stack (sbs view) and to .compare-wrap (ovl/swp).
+   width > 100% causes the body's overflow:auto to expose scrollbars for pan. */
+.layer-stack{position:relative;display:block;background:#1e1e1e;isolation:isolate;margin:0 auto}
 body[data-type="sch"] .layer-stack{background:#f5f5f5}
-.layer-stack img{display:block;max-width:100%;height:auto}
-.layer-stack img.layer{position:absolute;top:0;left:0;max-width:100%;height:auto;pointer-events:none}
+.layer-stack img{display:block;width:100%;height:auto}
+.layer-stack img.layer{position:absolute;top:0;left:0;width:100%;height:auto;pointer-events:none}
 
 /* --- Overlay/Swipe shared layout ---
-   compare-wrap uses width:100% (not max-width) so the container always tracks
-   the viewport width on resize. Without this, inline-block + max-width can get
-   "stuck" at a cached intrinsic size when the viewport is enlarged.
-   layer-stack uses max-width:100% + margin:auto to scale down for large images
-   while staying centered when the viewport is wider than the image. */
-.compare-wrap{position:relative;width:100%}
-.compare-wrap .layer-stack{display:block;max-width:100%;margin:0 auto}
+   compare-wrap is the scaled element for ovl/swp views. Width tracks the
+   viewport (calc with --zoom): 100% at zoom=1 (fits the body's content area),
+   >100% when zoomed in so the body's overflow:auto exposes scrollbars.
+   The two layer-stacks (base + over) inside fill compare-wrap completely. */
+.compare-wrap{position:relative;width:calc(var(--zoom,1) * 100%);flex-shrink:0}
+.compare-wrap .layer-stack{width:100%;margin:0}
 /* over-stack sits on top of the base layer-stack, same dimensions.
    background prevents the base from bleeding through semi-transparent
    layers. Color matches the layer-stack (dark for PCB, light for sch). */
 .compare-wrap .over-stack{position:absolute;top:0;left:0;width:100%;height:100%;background:#1e1e1e}
 body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
-.compare-wrap .over-stack .layer-stack{width:100%;max-width:100%}
+.compare-wrap .over-stack .layer-stack{width:100%}
 
 /* --- Overlay ---
    Same layout pattern as side-by-side: flex-direction:column with a
@@ -92,8 +101,11 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 .ovl{flex-direction:column;overflow:hidden}
 .ovl-controls{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:4px 12px;background:#2d2d2d;border-bottom:1px solid #3c3c3c;font-size:12px}
 .ovl-controls input[type=range]{width:200px;accent-color:#007acc}
-/* Scrollable image area, same structure as .pane-body in side-by-side. */
-.ovl-body{flex:1;overflow:auto;display:flex;justify-content:center;padding:4px}
+/* Scrollable image area. display:flex (without justify-content:center) so
+   the compare-wrap gets stretched to body height (bounding-box-wise) while
+   any oversized content scrolls left-aligned — flex-start default keeps the
+   image's left edge reachable when zoomed > 1. */
+.ovl-body{flex:1;overflow:auto;padding:4px;display:flex}
 
 /* --- Swipe ---
    After is the base, before is overlaid with clip-path:inset() to reveal
@@ -107,7 +119,7 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 /* Controls bar: same height as overlay's, provides visual space for the
    swipe handle and aligns the image start position with overlay mode. */
 .swp-controls{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:4px 12px;background:#2d2d2d;border-bottom:1px solid #3c3c3c;font-size:12px;cursor:col-resize}
-.swp-body{flex:1;overflow:auto;display:flex;justify-content:center;padding:4px;cursor:col-resize}
+.swp-body{flex:1;overflow:auto;padding:4px;cursor:col-resize;display:flex}
 /* Divider spans the entire swp view height (controls bar + image body).
    Positioned as a direct child of swp (not compare-wrap) so it extends
    into the controls bar. Left position is computed in JS based on
@@ -141,8 +153,8 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 
 <header>
   <h1 id="title"></h1>
-  <div class="tabs" id="view-tabs"></div>
   <div class="header-extras" id="header-extras"></div>
+  <div class="tabs" id="view-tabs"></div>
 </header>
 <div class="file-tabs" id="file-tabs" style="display:none"></div>
 <div class="page-tabs" id="page-tabs" style="display:none"></div>
@@ -203,6 +215,8 @@ let activeLayer = null; // selected layer name (gets z-index boost to top)
 let showDiff = true;  // default ON — diffs are the primary use case
 let swipePct = 50;      // swipe divider position in percent
 let currentPage = 0;    // multi-sheet schematic page index (0 = root)
+let zoomLevel = 1.0;    // 1.0 = fit to container; >1 enlarges (scrollbars pan)
+const ZOOM_MIN = 0.25, ZOOM_MAX = 16;
 
 /* Base z-order: bottom to top. The active layer is boosted above all others
    but keeps the same opacity — matching KiCad's behavior where the active
@@ -451,6 +465,55 @@ function setView(id) {
   applyLayers();
   if (id === 'swp') requestAnimationFrame(() => positionSwipe());
 }
+
+/* --- Zoom + pan ---
+ *  Wheel scrolls inside the active view's body trigger zoom (around the
+ *  cursor); pan is just the body's native scrollbars. We update the
+ *  --zoom CSS variable on the active body, scaling the layer-stack /
+ *  compare-wrap to (zoom * 100%) of the body width. Re-runs positionSwipe
+ *  so the divider stays accurate when zoom changes the wrap's geometry. */
+function applyZoom() {
+  document.documentElement.style.setProperty('--zoom', String(zoomLevel));
+  if (currentView === 'swp') positionSwipe();
+}
+
+/** Find the scrollable body element of the active view. */
+function activeBody() {
+  if (currentView === 'sbs') return $('#view-sbs .pane-body');
+  if (currentView === 'ovl') return $('.ovl-body');
+  if (currentView === 'swp') return $('#swipe-body');
+  return null;
+}
+
+/** Wheel handler: zoom around the cursor so the point under the mouse
+ *  stays put after the zoom (matches what users expect from CAD/image tools). */
+function onWheel(e) {
+  // Only handle wheels that originate inside one of the scrollable bodies.
+  const body = e.target.closest('.pane-body, .ovl-body, .swp-body');
+  if (!body) return;
+  e.preventDefault();
+
+  const rect = body.getBoundingClientRect();
+  // Mouse position relative to body's content (i.e. accounting for scroll)
+  const mx = e.clientX - rect.left + body.scrollLeft;
+  const my = e.clientY - rect.top + body.scrollTop;
+
+  const oldZoom = zoomLevel;
+  // ~10% per notch; deltaY is positive when scrolling down (zoom out)
+  const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, oldZoom * factor));
+  if (newZoom === oldZoom) return;
+  zoomLevel = newZoom;
+  applyZoom();
+
+  // Keep the same content point under the cursor: scale mouse coords by the
+  // zoom ratio and subtract the cursor offset within the body.
+  const ratio = newZoom / oldZoom;
+  body.scrollLeft = mx * ratio - (e.clientX - rect.left);
+  body.scrollTop = my * ratio - (e.clientY - rect.top);
+}
+
+document.addEventListener('wheel', onWheel, { passive: false });
 
 /* Render a friendly label for a git ref. Used in pane labels and the
    overlay/swipe legends. Empty/unset toRef means "working tree" (the

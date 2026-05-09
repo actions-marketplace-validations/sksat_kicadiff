@@ -13,8 +13,10 @@
  */
 
 import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { renderProject, printProjectSummary, resolveInputs } from "./render.ts";
-import type { LogLevel } from "./render.ts";
+import type { LogLevel, ProjectRenderResult } from "./render.ts";
 import { textDiff, markdownDiff } from "./textdiff.ts";
 import type { FileType } from "./types.ts";
 
@@ -54,13 +56,16 @@ Options:
   --from <ref>           Base ref (alternative to positional)
   --to <ref>             Target ref (alternative to positional; default: working tree)
   --output-dir <dir>     Image output directory (default: <repo>/.claude/preview)
-  -o, --output <path>    Diff HTML output path (default: <output-dir>/<name>_diff.html).
-                         Image paths in the HTML are made relative to <path>'s dir.
+  -o, --output <path>    Output file path. Default: <output-dir>/<name>_diff.html
+                         (or .md with --markdown). Image paths in the file are
+                         emitted relative to <path>'s directory so the file is
+                         portable. Use \`--output -\` or \`--output stdout\` to
+                         write the markdown report to stdout instead of a file.
   --images-only          Skip HTML generation and auto-open
   --text                 Also print a structural text diff to stdout
   --text-only            Print only the text diff (no SVG/PNG/HTML rendering — fast)
-  --markdown, --md       Also print a markdown diff (good for PR descriptions)
-  --markdown-only        Print only the markdown diff (no rendering)
+  --markdown, --md       Render images and emit a markdown report (side-by-side
+                         image table + structural diff). Skips HTML viewer.
   -v, --verbose, --debug Show every PNG path in the summary (default: only HTML path)
   -q, --quiet            Suppress the summary entirely
   --log <level>          Set summary log level: quiet | info | debug (default: info)
@@ -102,10 +107,10 @@ interface ParsedArgs {
   text?: boolean;
   /** Skip HTML/image rendering — only print the text diff. */
   textOnly?: boolean;
-  /** Print structural markdown diff to stdout (suitable for PRs / commits). */
+  /** Markdown mode: emit a markdown report referencing rendered images
+   *  (side-by-side, structural diff for pcb/sch). Images are rendered;
+   *  HTML viewer generation is skipped (markdown is the deliverable). */
   markdown?: boolean;
-  /** Skip HTML/image rendering — only print the markdown diff. */
-  markdownOnly?: boolean;
   /** Log level for stdout summary. Default "info". "debug" surfaces every PNG
    *  path; "quiet" suppresses the summary entirely. */
   logLevel?: LogLevel;
@@ -185,7 +190,6 @@ function parseArgs(argv: string[]): ParsedArgs {
   let text = false;
   let textOnly = false;
   let markdown = false;
-  let markdownOnly = false;
   let logLevel: LogLevel | undefined;
   let noCache = false;
   let open: string | undefined;
@@ -220,9 +224,6 @@ function parseArgs(argv: string[]): ParsedArgs {
       textOnly = true;
       text = true;
     } else if (arg === "--markdown" || arg === "--md") {
-      markdown = true;
-    } else if (arg === "--markdown-only" || arg === "--md-only") {
-      markdownOnly = true;
       markdown = true;
     } else if (arg === "--no-cache") {
       noCache = true;
@@ -336,7 +337,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   return {
     input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly,
-    markdown, markdownOnly, logLevel, noCache, scope, open,
+    markdown, logLevel, noCache, scope, open,
   };
 }
 
@@ -357,31 +358,41 @@ async function main(): Promise<void> {
   }
 
   try {
-    // *-Only flags short-circuit rendering entirely — useful when piping the
-    // diff into another tool or a PR description without paying for SVG/PNG.
+    // --text-only short-circuits rendering entirely — useful when piping the
+    // structural diff into another tool without paying for SVG/PNG.
     if (parsed.textOnly) { printTextDiff(parsed); return; }
-    if (parsed.markdownOnly) { printMarkdownDiff(parsed); return; }
+
+    // --markdown skips HTML viewer generation: the markdown is the deliverable
+    // and the viewer would be redundant. Images still render so the markdown
+    // can reference them.
+    const skipHtml = parsed.imagesOnly || parsed.markdown;
 
     const project = await renderProject({
       input: parsed.input,
       outputDir: parsed.outputDir,
       outputHtml: parsed.outputHtml,
-      imagesOnly: parsed.imagesOnly,
+      imagesOnly: skipHtml,
       fromRef: parsed.fromRef,
       toRef: parsed.toRef,
       open: parsed.open,
       scope: parsed.scope,
       noCache: parsed.noCache,
     });
-    printProjectSummary(project, !!parsed.imagesOnly, parsed.logLevel ?? "info");
+    // When stdout is reserved for the markdown report (--md --output stdout/-),
+    // route the summary line to stderr so the user can pipe `> report.md`
+    // without polluting the file with progress chatter.
+    const stdoutIsReport = parsed.markdown
+      && (parsed.outputHtml === "-" || parsed.outputHtml === "stdout");
+    printProjectSummary(project, !!skipHtml, parsed.logLevel ?? "info", stdoutIsReport);
     const quiet = (parsed.logLevel ?? "info") === "quiet";
+    const newline = (s: string) => stdoutIsReport ? process.stderr.write(s + "\n") : console.log(s);
     if (parsed.text) {
-      if (!quiet) console.log("");
+      if (!quiet) newline("");
       printTextDiff(parsed);
     }
     if (parsed.markdown) {
-      if (!quiet) console.log("");
-      printMarkdownDiff(parsed);
+      if (!quiet && !stdoutIsReport) newline("");
+      emitMarkdownReport(parsed, project);
     }
   } catch (e) {
     console.error(`Error: ${(e as Error).message}`);
@@ -406,22 +417,104 @@ function printTextDiff(parsed: ParsedArgs): void {
   }
 }
 
-/** Same as printTextDiff but emits markdown — useful for PR descriptions
- *  and commit messages. */
-function printMarkdownDiff(parsed: ParsedArgs): void {
-  const files = resolveInputs(parsed.input, parsed.scope)
-    .filter(f => f.endsWith(".kicad_pcb") || f.endsWith(".kicad_sch"));
-  if (files.length === 0) {
-    console.error("Warning: markdown diff supports only .kicad_pcb / .kicad_sch — nothing to diff");
-    return;
-  }
+/** Format a friendly ref label for markdown headings. Mirrors the viewer's
+ *  refLabel: empty/missing toRef → "working tree", full SHAs → 7-char short. */
+function refLabelMd(ref: string): string {
+  if (!ref) return "working tree";
+  if (/^[0-9a-f]{40}$/i.test(ref)) return ref.slice(0, 7);
+  return ref;
+}
+
+/** Build the markdown report text. Image paths are emitted relative to
+ *  `mdDir` so the file is portable: ship the .md alongside its image
+ *  directory and links resolve from any location. */
+function buildMarkdownReport(
+  parsed: ParsedArgs,
+  project: ProjectRenderResult,
+  mdDir: string,
+): string {
   const fromRef = parsed.fromRef ?? "HEAD";
   const toRef = parsed.toRef ?? "";
-  const repoRoot = repoRootOf(files[0]);
-  files.forEach((f, i) => {
-    if (i > 0) console.log("");
-    console.log(markdownDiff(f, fromRef, toRef, repoRoot));
-  });
+  const fromLabel = refLabelMd(fromRef);
+  const toLabel = refLabelMd(toRef);
+  const repoRoot = project.results[0]
+    ? repoRootOf(project.results[0].filePath)
+    : null;
+
+  const sections: string[] = [];
+  for (const r of project.results) {
+    const m = r.manifest;
+    const lines: string[] = [];
+    const rel = (abs: string) => path.relative(mdDir, abs);
+
+    // 1. Heading
+    lines.push(`## \`${r.relPath}\` (${m.type})`);
+
+    // 2. Side-by-side image table (only when both before and after exist).
+    //    Markdown's overlay/swipe equivalents would need JS — out of scope.
+    if (m.hasBefore && r.beforePng && r.afterPng) {
+      lines.push("");
+      lines.push(`| Before (${fromLabel}) | After (${toLabel}) |`);
+      lines.push("| --- | --- |");
+      lines.push(`| ![Before](${rel(r.beforePng)}) | ![After](${rel(r.afterPng)}) |`);
+    } else if (r.afterPng) {
+      lines.push("");
+      lines.push(`![Preview](${rel(r.afterPng)})`);
+    }
+
+    // 3. Structural diff body (pcb/sch only). markdownDiff produces its own
+    //    heading; drop it so our heading above isn't duplicated.
+    if (m.type === "pcb" || m.type === "sch") {
+      const struct = markdownDiff(r.filePath, fromRef, toRef, repoRoot)
+        .split("\n");
+      if (struct[0]?.startsWith("##")) {
+        struct.shift();
+        while (struct.length > 0 && struct[0] === "") struct.shift();
+      }
+      lines.push("");
+      lines.push(...struct);
+    }
+    sections.push(lines.join("\n"));
+  }
+  return sections.join("\n\n") + "\n";
+}
+
+/** Project-level filename for the combined markdown — kept in sync with the
+ *  HTML's projectSafeName so users get matching `<name>_diff.html` and
+ *  `<name>_diff.md` siblings. */
+function projectSafeNameFromResults(project: ProjectRenderResult): string {
+  if (project.combinedHtml) {
+    return path.basename(project.combinedHtml).replace(/_diff\.html$/, "");
+  }
+  // Fallback when imagesOnly skipped HTML: derive from the first file
+  const first = project.results[0];
+  if (!first) return "diff";
+  return path.basename(first.filePath).replace(/\.kicad_(pcb|sch|sym|mod)$/, "");
+}
+
+/** Emit the markdown report. Default destination is a file alongside the
+ *  rendered images (parallel to the HTML viewer); `--output - / stdout`
+ *  redirects to standard output, with image paths relative to CWD so the
+ *  user can pipe / redirect somewhere predictable. */
+function emitMarkdownReport(parsed: ParsedArgs, project: ProjectRenderResult): void {
+  const outArg = parsed.outputHtml; // unified --output / -o flag
+  const isStdout = outArg === "-" || outArg === "stdout";
+
+  if (isStdout) {
+    process.stdout.write(buildMarkdownReport(parsed, project, process.cwd()));
+    return;
+  }
+
+  const outDir = project.results[0]?.outputDir ?? process.cwd();
+  const safeName = projectSafeNameFromResults(project);
+  const mdPath = outArg
+    ? path.resolve(outArg)
+    : path.join(outDir, `${safeName}_diff.md`);
+  fs.mkdirSync(path.dirname(mdPath), { recursive: true });
+  fs.writeFileSync(mdPath, buildMarkdownReport(parsed, project, path.dirname(mdPath)));
+  if ((parsed.logLevel ?? "info") !== "quiet") {
+    console.log(`Diff markdown: ${mdPath}`);
+  }
 }
 
 function repoRootOf(filePath: string): string | null {

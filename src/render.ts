@@ -184,11 +184,16 @@ function cacheKeyFor(content: Buffer, fileType: FileType, filePath: string): str
   h.update("\0");
 
   // Project files only matter for pcb/sch — sym/fp are self-contained.
+  // Filter out our own temp leftovers (preview_*.kicad_prl) so they don't
+  // make the cache key churn between runs — kicad-cli writes a sibling .prl
+  // for each temp .kicad_pcb / .kicad_sch we feed it, and those files
+  // accumulate in the working tree if not cleaned up.
   if (fileType === "pcb" || fileType === "sch") {
     const dir = path.dirname(filePath);
     try {
       const siblings = fs.readdirSync(dir)
-        .filter(f => f.endsWith(".kicad_pro") || f.endsWith(".kicad_prl"))
+        .filter(f => (f.endsWith(".kicad_pro") || f.endsWith(".kicad_prl"))
+                  && !f.startsWith("preview_"))
         .sort();
       for (const f of siblings) {
         h.update(f);
@@ -730,13 +735,24 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
       await renderFromSource(filePath);
     } else {
       // We already have content in memory — write to temp without a second
-      // git invocation. (gitShowToTempBeside duplicates this work, but we
-      // keep the helper for callers without pre-loaded content.)
+      // git invocation.
       const tempFile = writeContentToTempBeside(content!, filePath);
       try {
         await renderFromSource(tempFile);
       } finally {
         if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+        // kicad-cli writes a sibling .kicad_prl next to .kicad_pcb / .kicad_sch
+        // (project state — last layer, view, etc.). For our temp file it's
+        // useless and pollutes the working tree, so clean it up. Without this,
+        // accumulating preview_*.kicad_prl files invalidate the render cache
+        // because they appear in the cache key's sibling list.
+        const ext = path.extname(tempFile);
+        if (ext === ".kicad_pcb" || ext === ".kicad_sch") {
+          const tempPrl = tempFile.slice(0, -ext.length) + ".kicad_prl";
+          if (fs.existsSync(tempPrl)) {
+            try { fs.unlinkSync(tempPrl); } catch { /* ignore */ }
+          }
+        }
       }
     }
 
@@ -1121,13 +1137,20 @@ export type LogLevel = "quiet" | "info" | "debug";
 /** Print a project-level summary. At "info" (default) we only show the
  *  per-file rendered line and a single combined HTML path; PNG paths are
  *  emitted only at "debug". `imagesOnly` mode prints just the output dir at
- *  info, full per-file PNG paths at debug. */
+ *  info, full per-file PNG paths at debug.
+ *
+ *  When `toStderr` is true (caller has reserved stdout for an output file
+ *  like the markdown report), the summary is routed to stderr instead. */
 export function printProjectSummary(
   project: ProjectRenderResult,
   imagesOnly: boolean,
   logLevel: LogLevel = "info",
+  toStderr: boolean = false,
 ): void {
   if (logLevel === "quiet") return;
+  const log = toStderr
+    ? (s: string) => process.stderr.write(s + "\n")
+    : (s: string) => console.log(s);
 
   const showPaths = logLevel === "debug";
 
@@ -1136,13 +1159,13 @@ export function printProjectSummary(
     // level a single output dir line is enough
     if (showPaths) {
       for (const r of project.results) {
-        console.log(`Images: ${r.relPath}`);
-        console.log(`  After:  ${r.afterPng}`);
-        if (r.beforePng) console.log(`  Before: ${r.beforePng}`);
-        if (r.diffPng) console.log(`  Diff:   ${r.diffPng}`);
+        log(`Images: ${r.relPath}`);
+        log(`  After:  ${r.afterPng}`);
+        if (r.beforePng) log(`  Before: ${r.beforePng}`);
+        if (r.diffPng) log(`  Diff:   ${r.diffPng}`);
       }
     } else if (project.results[0]) {
-      console.log(`Images updated: ${project.results[0].outputDir}`);
+      log(`Images updated: ${project.results[0].outputDir}`);
     }
     return;
   }
@@ -1150,17 +1173,17 @@ export function printProjectSummary(
   // Normal mode — per-file rendered line, optional PNG details, single HTML
   for (const r of project.results) {
     const tag = r.beforePng ? "" : " (new file — no before state in git)";
-    console.log(`Rendered: ${r.relPath}${tag}`);
+    log(`Rendered: ${r.relPath}${tag}`);
     if (showPaths) {
-      console.log(`  After:  ${r.afterPng}`);
-      if (r.beforePng) console.log(`  Before: ${r.beforePng}`);
-      if (r.diffPng) console.log(`  Diff:   ${r.diffPng}`);
+      log(`  After:  ${r.afterPng}`);
+      if (r.beforePng) log(`  Before: ${r.beforePng}`);
+      if (r.diffPng) log(`  Diff:   ${r.diffPng}`);
     }
   }
 
   // Combined HTML (deduplicated — multiple results in project mode share it)
   const html = project.combinedHtml ?? project.results[0]?.diffHtml;
-  if (html) console.log(`Diff HTML: ${html} (open with Live Preview in VSCode)`);
+  if (html) log(`Diff HTML: ${html} (open with Live Preview in VSCode)`);
 }
 
 /** @deprecated kept for older callers; prefer printProjectSummary. */
