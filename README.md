@@ -72,10 +72,12 @@ kicadiff project/ --images-only         # PNGs only, no HTML / markdown
 
 # Custom markdown templates (Mustache subset: {{var}}, {{#section}}…{{/section}},
 # {{^inverted}}…{{/inverted}}). Project template sees from_label / to_label /
-# file_count / has_changes / files / file_sections; file template sees path /
+# file_count / has_changes / files / file_sections. File template sees path /
 # type / before_image / after_image / has_both / after_only / before_only /
-# has_structural_diff / structural_diff. Either flag is optional; the default
-# template ships built-in.
+# added_count / removed_count / changed_count / unchanged_count /
+# has_structural_diff (real component changes) / has_visual_diff (PNGs differ) /
+# has_changes (any of the above) / structural_diff (formatted body). Either
+# flag is optional; the default template ships built-in.
 kicadiff project/ --md --md-template my-report.md.tpl
 kicadiff project/ --md --md-file-template my-file.md.tpl
 

@@ -20,7 +20,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { renderProject, printProjectSummary, resolveInputs, resolveOutputPath } from "./render.ts";
 import type { LogLevel, ProjectRenderResult } from "./render.ts";
-import { textDiff, markdownDiff } from "./textdiff.ts";
+import { textDiff, markdownDiff, computeFileDiff } from "./textdiff.ts";
 import { renderTemplate } from "./template.ts";
 import type { FileType } from "./types.ts";
 
@@ -81,8 +81,11 @@ Options:
   --md-file-template <p> Use a custom per-file markdown template. Rendered for
                          each file with: path, type, before_image, after_image,
                          has_before, has_after, has_both, after_only, before_only,
-                         has_structural_diff, structural_diff. The result fills
-                         {{file_sections}} in the project template.
+                         added_count, removed_count, changed_count, unchanged_count,
+                         has_structural_diff (real component changes exist),
+                         has_visual_diff (rendered PNGs differ), has_changes (any
+                         of the above), and structural_diff (the formatted body).
+                         The result fills {{file_sections}} in the project template.
   -v, --verbose, --debug Show every PNG path in the summary (default: only HTML path)
   -q, --quiet            Suppress the summary entirely
   --log <level>          Set summary log level: quiet | info | debug (default: info)
@@ -546,13 +549,20 @@ function refLabelMd(ref: string): string {
 /** Default per-file markdown template. Reproduces the pre-templating output
  *  shape: a heading, then the appropriate image block (side-by-side table /
  *  preview / deletion notice), then the structural diff body. Authors can
- *  override via --md-file-template. */
+ *  override via --md-file-template.
+ *
+ *  The structural section is gated on `{{#structural_diff}}` (Mustache
+ *  truthy-on-non-empty-string) rather than `has_structural_diff`, so that
+ *  the bundled default still shows the `+0 -0 ~0 =N` summary line for
+ *  unchanged pcb/sch files (matching the pre-templating behaviour). The
+ *  stricter `has_structural_diff` boolean is reserved for custom templates
+ *  that want to filter out unchanged files entirely. */
 const DEFAULT_FILE_TEMPLATE =
   "## `{{path}}` ({{type}})" +
   "{{#has_both}}\n\n| Before ({{from_label}}) | After ({{to_label}}) |\n| --- | --- |\n| ![Before]({{before_image}}) | ![After]({{after_image}}) |{{/has_both}}" +
   "{{#after_only}}\n\n![Preview]({{after_image}}){{/after_only}}" +
   "{{#before_only}}\n\n![Before — deleted in {{to_label}}]({{before_image}}){{/before_only}}" +
-  "{{#has_structural_diff}}\n\n{{structural_diff}}{{/has_structural_diff}}";
+  "{{#structural_diff}}\n\n{{structural_diff}}{{/structural_diff}}";
 
 /** Default project-level template. Just emits the rendered file sections
  *  joined with blank lines and a trailing newline. Override via --md-template
@@ -573,7 +583,23 @@ interface FileTemplateContext extends Record<string, unknown> {
   has_both: boolean;
   after_only: boolean;
   before_only: boolean;
+  /** Component-level diff counts (pcb/sch only; 0 for sym/fp). */
+  added_count: number;
+  removed_count: number;
+  changed_count: number;
+  unchanged_count: number;
+  /** True iff the structural diff has at least one added / removed / changed
+   *  component. Use this to filter out unchanged files in custom templates.
+   *  Distinct from `structural_diff` being non-empty: unchanged pcb/sch files
+   *  still emit a `+0 -0 ~0 =N` summary line, so `structural_diff` is non-
+   *  empty even when `has_structural_diff` is false. */
   has_structural_diff: boolean;
+  /** True when the rendered before/after PNG bytes differ. */
+  has_visual_diff: boolean;
+  /** True when the file has any visible change at all (structural or visual,
+   *  or one side missing entirely). The convenient catch-all for templates
+   *  that want to filter to "changed files only". */
+  has_changes: boolean;
   structural_diff: string;
 }
 
@@ -611,8 +637,22 @@ function buildMarkdownReport(
     const hasBoth = !!(m.hasBefore && r.beforePng && r.afterPng);
     const afterOnly = !hasBoth && !!r.afterPng;
     const beforeOnly = !hasBoth && !r.afterPng && !!r.beforePng;
+
+    // Pull component counts directly from computeFileDiff so templates can
+    // distinguish "section is included" (default rendering) from "section
+    // has actual changes" (filter out unchanged files).
+    let addedCount = 0;
+    let removedCount = 0;
+    let changedCount = 0;
+    let unchangedCount = 0;
     let structuralDiff = "";
     if (m.type === "pcb" || m.type === "sch") {
+      const fd = computeFileDiff(r.filePath, fromRef, toRef, repoRoot);
+      addedCount = fd.diff.added.length;
+      removedCount = fd.diff.removed.length;
+      changedCount = fd.diff.changed.length;
+      unchangedCount = fd.diff.unchanged;
+
       const struct = markdownDiff(r.filePath, fromRef, toRef, repoRoot)
         .split("\n");
       // markdownDiff prefixes a `## …` heading; drop it so our template
@@ -623,6 +663,16 @@ function buildMarkdownReport(
       }
       structuralDiff = struct.join("\n");
     }
+
+    const hasStructuralDiff = (addedCount + removedCount + changedCount) > 0;
+    const hasVisualDiff = !!m.hasDiff;
+    // "Has changes" = any meaningful difference. A file with both sides but
+    // identical content has none of these; a renamed/added/deleted file has
+    // afterOnly/beforeOnly; an edited file has either structural or visual
+    // diff (often both).
+    const hasChanges =
+      hasStructuralDiff || hasVisualDiff || afterOnly || beforeOnly;
+
     return {
       path: r.relPath,
       type: m.type,
@@ -637,7 +687,13 @@ function buildMarkdownReport(
       has_both: hasBoth,
       after_only: afterOnly,
       before_only: beforeOnly,
-      has_structural_diff: structuralDiff.length > 0,
+      added_count: addedCount,
+      removed_count: removedCount,
+      changed_count: changedCount,
+      unchanged_count: unchangedCount,
+      has_structural_diff: hasStructuralDiff,
+      has_visual_diff: hasVisualDiff,
+      has_changes: hasChanges,
       structural_diff: structuralDiff,
     };
   });
@@ -651,7 +707,7 @@ function buildMarkdownReport(
     from_label: fromLabel,
     to_label: toLabel,
     file_count: fileContexts.length,
-    has_changes: fileContexts.some((c) => c.has_structural_diff || c.has_both || c.after_only || c.before_only),
+    has_changes: fileContexts.some((c) => c.has_changes),
     files: fileContexts,
     file_sections: fileSections,
   });

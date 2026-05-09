@@ -570,11 +570,12 @@ test.describe("--output flag", () => {
 // =============================================================================
 
 test.describe("--md templating", () => {
-  /** Run kicadiff and capture the generated markdown report. */
-  function runMd(args: string[]): string {
+  /** Run kicadiff and capture the generated markdown report. Refs (if any)
+   *  go before the input; everything else goes after. */
+  function runMd(args: string[], refs: string[] = []): string {
     const dir = path.join(outputDir, "md-out");
     fs.mkdirSync(dir);
-    runCli([PCB_FILE, "--output-dir", outputDir, "--md", "--output", dir, ...args]);
+    runCli([...refs, PCB_FILE, "--output-dir", outputDir, "--md", "--output", dir, ...args]);
     const reportName = PROJECT_HTML.replace(/_diff\.html$/, "_diff.md");
     return fs.readFileSync(path.join(dir, reportName), "utf8");
   }
@@ -618,14 +619,55 @@ test.describe("--md templating", () => {
     const tplPath = path.join(outputDir, "file.tpl");
     fs.writeFileSync(
       tplPath,
-      "{{path}}: {{#has_structural_diff}}HAS{{/has_structural_diff}}{{^has_structural_diff}}NONE{{/has_structural_diff}}",
+      "{{path}}: {{#structural_diff}}HAS{{/structural_diff}}{{^structural_diff}}NONE{{/structural_diff}}",
     );
     const md = runMd(["--md-file-template", tplPath]);
-    // The fixture's PCB and SCH always render structural diff bodies, so
-    // every line should contain HAS, not NONE. (Mostly verifies that the
-    // template engine wires has_structural_diff correctly.)
+    // PCB/SCH always have a structural body (counts line) even when nothing
+    // changed, so every line should contain HAS, not NONE. (Verifies that
+    // the template engine treats non-empty strings as truthy.)
     expect(md).toContain("HAS");
     expect(md).not.toContain("NONE");
+  });
+
+  test("has_structural_diff means real component changes, not body presence", () => {
+    // HEAD vs HEAD = zero component changes. has_structural_diff must be
+    // false even though structural_diff still contains the `+0 -0 ~0 =N`
+    // summary. This locks in the semantic distinction.
+    const tplPath = path.join(outputDir, "file.tpl");
+    fs.writeFileSync(
+      tplPath,
+      "{{path}}|sd={{#has_structural_diff}}1{{/has_structural_diff}}{{^has_structural_diff}}0{{/has_structural_diff}}",
+    );
+    const md = runMd(["--md-file-template", tplPath], ["HEAD"]);
+    expect(md.match(/\|sd=0/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(md).not.toContain("|sd=1");
+  });
+
+  test("project has_changes is false when all files are unchanged", () => {
+    const tplPath = path.join(outputDir, "proj.tpl");
+    fs.writeFileSync(
+      tplPath,
+      "{{#has_changes}}CHANGED{{/has_changes}}{{^has_changes}}CLEAN{{/has_changes}}\n",
+    );
+    const md = runMd(["--md-template", tplPath], ["HEAD"]);
+    expect(md.trim()).toBe("CLEAN");
+  });
+
+  test("count fields are exposed and reflect the structural diff", () => {
+    const tplPath = path.join(outputDir, "file.tpl");
+    fs.writeFileSync(
+      tplPath,
+      "{{path}}|+{{added_count}}|-{{removed_count}}|~{{changed_count}}|={{unchanged_count}}",
+    );
+    const md = runMd(["--md-file-template", tplPath], ["HEAD"]);
+    // Each rendered file becomes one non-empty line; the default project
+    // template joins sections with blank lines, so filter those out before
+    // asserting the per-file pattern.
+    const lines = md.trim().split("\n").filter((l) => l !== "");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of lines) {
+      expect(line).toMatch(/\|\+0\|-0\|~0\|=\d+$/);
+    }
   });
 
   test("missing template path produces a clear error", () => {

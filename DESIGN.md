@@ -89,13 +89,24 @@ ImageMagick) に丸投げし、kicadiff は orchestration とキャッシュと
 レポートは 2 層のテンプレートで組み立てる:
 
 1. **file テンプレート** — 各ファイル毎に 1 度レンダリングされ、
-   `path` / `type` / `before_image` / `after_image` / `has_both` /
-   `after_only` / `before_only` / `has_structural_diff` /
-   `structural_diff` 等を context に持つ。
+   以下を context に持つ:
+   - `path` / `type` / `from_ref` / `to_ref` / `from_label` / `to_label`
+   - 画像: `before_image` / `after_image` / `has_before` / `has_after` /
+     `has_both` / `after_only` / `before_only`
+   - 構造差分の数: `added_count` / `removed_count` / `changed_count` /
+     `unchanged_count`
+   - 真偽: `has_structural_diff` (実際に追加/削除/変更があった場合のみ
+     true。PCB/SCH の `+0 -0 ~0 =N` summary 行は `structural_diff` 文字列
+     には含まれるが、これだけでは false) / `has_visual_diff` (描画した
+     before/after の PNG が byte 単位で異なる) / `has_changes` (上記の
+     いずれか / 片側だけ存在も含む)
+   - 本文: `structural_diff` (整形済の構造差分本文。pcb/sch 以外は空)
 2. **project テンプレート** — 全 file セクションを `\n\n` で連結
    した結果が `{{file_sections}}` として渡される。これに加えて
    `from_ref` / `to_ref` / `from_label` / `to_label` /
-   `file_count` / `has_changes` / `files` (配列) も見える。
+   `file_count` / `has_changes` (どれか 1 ファイルでも `has_changes` /
+   `files` (配列、Mustache の `{{#files}}…{{/files}}` で iterate 可能;
+   要素は file テンプレートと同じ context) も見える。
 
 実装は `src/template.ts` の Mustache サブセット (依存なし、~120 行):
 `{{var}}` / `{{#section}}…{{/section}}` (truthy block; array は
