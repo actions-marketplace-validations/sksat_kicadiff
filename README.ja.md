@@ -7,6 +7,8 @@ KiCad プロジェクト用の visual diff ツール。`.kicad_pcb` /
 
 [English README](./README.md)
 
+![kicadiff demo](assets/kicadiff-demo.gif)
+
 ## 提供する機能
 
 - **HTML ビューア** — Side-by-Side / Overlay / Swipe の3表示モード、

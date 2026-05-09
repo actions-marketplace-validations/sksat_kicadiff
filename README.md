@@ -6,6 +6,8 @@ file in your browser, or as a markdown report you can paste into a PR.
 
 [日本語版 README](./README.ja.md)
 
+![kicadiff demo](assets/kicadiff-demo.gif)
+
 ## What you get
 
 - **HTML viewer** with side-by-side / overlay / swipe modes, layer toggles
