@@ -247,13 +247,20 @@ function readAtRef(filePath: string, ref: string, repoRoot: string | null): stri
   });
 }
 
-/** Render a textual diff for a single KiCad file. Returns a multi-line string. */
-export function textDiff(
+export interface FileDiff {
+  fileType: FileType;
+  rel: string;
+  diff: ComponentDiff;
+}
+
+/** Compute a structural component diff for a single KiCad file. The result is
+ *  format-agnostic — both textDiff and markdownDiff render it. */
+export function computeFileDiff(
   filePath: string,
   fromRef: string,
   toRef: string,
   repoRoot: string | null,
-): string {
+): FileDiff {
   let fileType: FileType;
   if (filePath.endsWith(".kicad_pcb")) fileType = "pcb";
   else if (filePath.endsWith(".kicad_sch")) fileType = "sch";
@@ -265,9 +272,19 @@ export function textDiff(
   const before = beforeSrc ? extractComponents(beforeSrc, fileType) : [];
   const after = afterSrc ? extractComponents(afterSrc, fileType) : [];
 
-  const d = diffComponents(before, after);
-  const lines: string[] = [];
   const rel = repoRoot ? path.relative(repoRoot, filePath) : filePath;
+  return { fileType, rel, diff: diffComponents(before, after) };
+}
+
+/** Render a textual diff for a single KiCad file. Returns a multi-line string. */
+export function textDiff(
+  filePath: string,
+  fromRef: string,
+  toRef: string,
+  repoRoot: string | null,
+): string {
+  const { fileType, rel, diff: d } = computeFileDiff(filePath, fromRef, toRef, repoRoot);
+  const lines: string[] = [];
   lines.push(`${rel} (${fileType}): +${d.added.length} -${d.removed.length} ~${d.changed.length} =${d.unchanged}`);
 
   for (const c of d.added) {
@@ -284,6 +301,56 @@ export function textDiff(
       parts.push(`${f}: ${bv} → ${av}`);
     }
     lines.push(`  ~ ${ch.ref}  ${parts.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+/** Render a markdown diff for a single KiCad file. Suitable for pasting into
+ *  PR descriptions, issue comments, or commit messages — refs, values, and
+ *  field names are wrapped in backticks for monospace rendering. */
+export function markdownDiff(
+  filePath: string,
+  fromRef: string,
+  toRef: string,
+  repoRoot: string | null,
+): string {
+  const { fileType, rel, diff: d } = computeFileDiff(filePath, fromRef, toRef, repoRoot);
+  const lines: string[] = [];
+
+  // File header. Backtick the path so it renders monospace and won't be
+  // interpreted as markdown formatting if it contains `_` or other chars.
+  lines.push(`## \`${rel}\` (${fileType})`);
+  lines.push("");
+  lines.push(`\`+${d.added.length}\` \`-${d.removed.length}\` \`~${d.changed.length}\` \`=${d.unchanged}\``);
+
+  if (d.added.length > 0) {
+    lines.push("");
+    lines.push(`### Added (${d.added.length})`);
+    for (const c of d.added) {
+      const at = c.pos ? ` at \`(${c.pos})\`` : "";
+      lines.push(`- \`${c.ref}\` \`${c.value}\` \`${c.libId}\`${at}`);
+    }
+  }
+  if (d.removed.length > 0) {
+    lines.push("");
+    lines.push(`### Removed (${d.removed.length})`);
+    for (const c of d.removed) {
+      const at = c.pos ? ` at \`(${c.pos})\`` : "";
+      lines.push(`- \`${c.ref}\` \`${c.value}\` \`${c.libId}\`${at}`);
+    }
+  }
+  if (d.changed.length > 0) {
+    lines.push("");
+    lines.push(`### Changed (${d.changed.length})`);
+    for (const ch of d.changed) {
+      const parts: string[] = [];
+      for (const f of ch.fields) {
+        const bv = (ch.before as unknown as Record<string, string | undefined>)[f] ?? "";
+        const av = (ch.after as unknown as Record<string, string | undefined>)[f] ?? "";
+        parts.push(`${f}: \`${bv}\` → \`${av}\``);
+      }
+      lines.push(`- \`${ch.ref}\` — ${parts.join(", ")}`);
+    }
   }
   return lines.join("\n");
 }

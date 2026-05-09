@@ -15,7 +15,7 @@
 import { spawnSync } from "node:child_process";
 import { renderProject, printProjectSummary, resolveInputs } from "./render.ts";
 import type { LogLevel } from "./render.ts";
-import { textDiff } from "./textdiff.ts";
+import { textDiff, markdownDiff } from "./textdiff.ts";
 import type { FileType } from "./types.ts";
 
 function usage(): void {
@@ -59,9 +59,12 @@ Options:
   --images-only          Skip HTML generation and auto-open
   --text                 Also print a structural text diff to stdout
   --text-only            Print only the text diff (no SVG/PNG/HTML rendering — fast)
+  --markdown, --md       Also print a markdown diff (good for PR descriptions)
+  --markdown-only        Print only the markdown diff (no rendering)
   -v, --verbose, --debug Show every PNG path in the summary (default: only HTML path)
   -q, --quiet            Suppress the summary entirely
   --log <level>          Set summary log level: quiet | info | debug (default: info)
+  --no-cache             Skip the render cache (default: cached at \$XDG_CACHE_HOME/kicadiff)
   --open                 Open diff HTML with xdg-open after rendering
   --open vscode|code     Open in VSCode tab (\`code -r\`)
   --open firefox|...     Open in named browser (firefox, chromium, chrome, etc.)
@@ -99,9 +102,15 @@ interface ParsedArgs {
   text?: boolean;
   /** Skip HTML/image rendering — only print the text diff. */
   textOnly?: boolean;
+  /** Print structural markdown diff to stdout (suitable for PRs / commits). */
+  markdown?: boolean;
+  /** Skip HTML/image rendering — only print the markdown diff. */
+  markdownOnly?: boolean;
   /** Log level for stdout summary. Default "info". "debug" surfaces every PNG
    *  path; "quiet" suppresses the summary entirely. */
   logLevel?: LogLevel;
+  /** Disable the per-side render cache (default: cache enabled). */
+  noCache?: boolean;
   scope?: FileType;
   open?: string;
 }
@@ -175,7 +184,10 @@ function parseArgs(argv: string[]): ParsedArgs {
   let imagesOnly = false;
   let text = false;
   let textOnly = false;
+  let markdown = false;
+  let markdownOnly = false;
   let logLevel: LogLevel | undefined;
+  let noCache = false;
   let open: string | undefined;
 
   for (; i < argv.length; i++) {
@@ -207,6 +219,13 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === "--text-only") {
       textOnly = true;
       text = true;
+    } else if (arg === "--markdown" || arg === "--md") {
+      markdown = true;
+    } else if (arg === "--markdown-only" || arg === "--md-only") {
+      markdownOnly = true;
+      markdown = true;
+    } else if (arg === "--no-cache") {
+      noCache = true;
     } else if (arg === "--verbose" || arg === "-v" || arg === "--debug") {
       logLevel = "debug";
     } else if (arg === "--quiet" || arg === "-q") {
@@ -316,7 +335,8 @@ function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return {
-    input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly, logLevel, scope, open,
+    input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly,
+    markdown, markdownOnly, logLevel, noCache, scope, open,
   };
 }
 
@@ -337,10 +357,11 @@ async function main(): Promise<void> {
   }
 
   try {
-    if (parsed.textOnly) {
-      printTextDiff(parsed);
-      return;
-    }
+    // *-Only flags short-circuit rendering entirely — useful when piping the
+    // diff into another tool or a PR description without paying for SVG/PNG.
+    if (parsed.textOnly) { printTextDiff(parsed); return; }
+    if (parsed.markdownOnly) { printMarkdownDiff(parsed); return; }
+
     const project = await renderProject({
       input: parsed.input,
       outputDir: parsed.outputDir,
@@ -350,11 +371,17 @@ async function main(): Promise<void> {
       toRef: parsed.toRef,
       open: parsed.open,
       scope: parsed.scope,
+      noCache: parsed.noCache,
     });
     printProjectSummary(project, !!parsed.imagesOnly, parsed.logLevel ?? "info");
+    const quiet = (parsed.logLevel ?? "info") === "quiet";
     if (parsed.text) {
-      if ((parsed.logLevel ?? "info") !== "quiet") console.log("");
+      if (!quiet) console.log("");
       printTextDiff(parsed);
+    }
+    if (parsed.markdown) {
+      if (!quiet) console.log("");
+      printMarkdownDiff(parsed);
     }
   } catch (e) {
     console.error(`Error: ${(e as Error).message}`);
@@ -377,6 +404,24 @@ function printTextDiff(parsed: ParsedArgs): void {
   for (const f of files) {
     console.log(textDiff(f, fromRef, toRef, repoRoot));
   }
+}
+
+/** Same as printTextDiff but emits markdown — useful for PR descriptions
+ *  and commit messages. */
+function printMarkdownDiff(parsed: ParsedArgs): void {
+  const files = resolveInputs(parsed.input, parsed.scope)
+    .filter(f => f.endsWith(".kicad_pcb") || f.endsWith(".kicad_sch"));
+  if (files.length === 0) {
+    console.error("Warning: markdown diff supports only .kicad_pcb / .kicad_sch — nothing to diff");
+    return;
+  }
+  const fromRef = parsed.fromRef ?? "HEAD";
+  const toRef = parsed.toRef ?? "";
+  const repoRoot = repoRootOf(files[0]);
+  files.forEach((f, i) => {
+    if (i > 0) console.log("");
+    console.log(markdownDiff(f, fromRef, toRef, repoRoot));
+  });
 }
 
 function repoRootOf(filePath: string): string | null {

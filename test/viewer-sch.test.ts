@@ -23,13 +23,11 @@ test.describe("Schematic viewer", () => {
     expect(type).toBe("sch");
   });
 
-  test("layer list is hidden for schematic", async ({ page }) => {
-    // Schematics don't have PCB layers — layer list should be hidden,
-    // but the panel itself may be visible to host the diff toggle.
-    const display = await page
-      .locator("#layer-list")
-      .evaluate((el) => getComputedStyle(el).display);
-    expect(display).toBe("none");
+  test("layer panel is hidden for schematic", async ({ page }) => {
+    // Schematics don't have PCB layers and the diff toggle now lives in
+    // the header row, so the layer panel has nothing to host and stays
+    // hidden entirely.
+    await expect(page.locator("#layer-panel")).not.toBeVisible();
   });
 
   test("combined schematic image is shown in side-by-side", async ({ page }) => {
@@ -68,7 +66,7 @@ test.describe("Schematic viewer", () => {
     const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.files[0].diff);
     if (!hasDiff) test.skip();
 
-    const diffCheckbox = page.locator('#layer-extras input[type="checkbox"]');
+    const diffCheckbox = page.locator('#header-extras input[type="checkbox"]');
     await expect(diffCheckbox).toBeVisible();
   });
 
@@ -76,7 +74,7 @@ test.describe("Schematic viewer", () => {
     const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.files[0].diff);
     if (!hasDiff) test.skip();
 
-    const diffCheckbox = page.locator('#layer-extras input[type="checkbox"]');
+    const diffCheckbox = page.locator('#header-extras input[type="checkbox"]');
     const diffOverlay = page.locator('img[data-diff="1"]').first();
 
     // Default ON: overlay visible, checkbox checked

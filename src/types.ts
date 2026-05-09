@@ -42,6 +42,13 @@ export interface FileManifest {
    *  affect rendering (whitespace, comment changes). Used by the viewer to
    *  highlight tabs that have real differences vs. tabs that don't. */
   hasDiff?: boolean;
+  /** Git ref used as the before side (e.g. "HEAD", "main", "abc1234").
+   *  Echoed to the viewer so reviewers can see what they're comparing
+   *  against in side-by-side / overlay / swipe labels. */
+  fromRef?: string;
+  /** Git ref used as the after side. Empty string ("") means working tree —
+   *  the viewer renders this as "working tree" or "edited". */
+  toRef?: string;
   after: SideManifest;
   before?: SideManifest;
   /** Diff highlight image (ImageMagick compare output), present only if both

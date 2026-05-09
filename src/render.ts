@@ -6,6 +6,7 @@
  */
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -39,6 +40,10 @@ export interface RenderOptions {
    *     "chromium"); spawned with the HTML path as its argument.
    *  Override with KICADIFF_OPEN_CMD env var (full command, html path appended). */
   open?: string;
+  /** Disable the per-side render cache. Default: cache enabled.
+   *  When false, the rendered PNGs are also persisted to ~/.cache/kicadiff/
+   *  so that subsequent runs against the same content return near-instantly. */
+  noCache?: boolean;
 }
 
 export interface RenderResult {
@@ -109,30 +114,164 @@ function gitHasFileAtRef(repoRoot: string, ref: string, relPath: string): boolea
   return r.status === 0;
 }
 
-/** Extract `<ref>:<relPath>` to a temp file beside `nearFile`, preserving the
- *  extension. Atomic w.r.t. other readers: the file is written in one syscall
- *  with full content (no empty placeholder window). This matters for .pretty/
- *  directories where parallel kicad-cli invocations scan all sibling .kicad_mod
- *  files; an empty placeholder would cause "Unable to load library" errors. */
-function gitShowToTempBeside(
-  repoRoot: string,
-  ref: string,
-  relPath: string,
-  nearFile: string,
-): string {
-  const dir = path.dirname(nearFile);
-  const ext = path.extname(nearFile);
-  const out = execFileSync("git", ["-C", repoRoot, "show", `${ref}:${relPath}`], {
+/** Read `<ref>:<relPath>` content as a Buffer. Returns null if the path does
+ *  not exist at that ref. */
+function gitReadAtRef(repoRoot: string, ref: string, relPath: string): Buffer | null {
+  if (!gitHasFileAtRef(repoRoot, ref, relPath)) return null;
+  return execFileSync("git", ["-C", repoRoot, "show", `${ref}:${relPath}`], {
     maxBuffer: 32 * 1024 * 1024,
   });
-  // Retry on the rare collision (6-char random space is small but non-zero)
+}
+
+// =============================================================================
+// Render output cache
+//
+// Rendering kicad-cli + rsvg-convert is the slow part of this tool (seconds
+// per file), but the result is fully determined by the file's content + the
+// kicad-cli version. We hash both into a content-addressed cache so repeated
+// runs against the same git ref / unchanged working tree are near-instant.
+//
+// Cache layout:
+//   <root>/<2-char hash prefix>/<rest of hash>/
+//     combined.png          ← the side's primary image
+//     extras/               ← layers/ (pcb), pages/ (sch), or items/ (sym/fp)
+//
+// Cache scope: per-side (before and after each get their own entry, keyed by
+// their respective source content). Identical content (e.g. unchanged file
+// across before/after) hits the same entry.
+// =============================================================================
+
+let cachedKicadVersion: string | null = null;
+
+function getKicadCliVersion(): string {
+  if (cachedKicadVersion !== null) return cachedKicadVersion;
+  try {
+    const r = spawnSync("kicad-cli", ["--version"], { encoding: "utf8" });
+    cachedKicadVersion = (r.stdout ?? "").trim() || "unknown";
+  } catch {
+    cachedKicadVersion = "unknown";
+  }
+  return cachedKicadVersion;
+}
+
+function getCacheRoot(): string {
+  const env = process.env.KICADIFF_CACHE_DIR;
+  if (env) return env;
+  const xdg = process.env.XDG_CACHE_HOME;
+  const base = xdg ?? path.join(os.homedir(), ".cache");
+  return path.join(base, "kicadiff");
+}
+
+function cacheKeyFor(content: Buffer, fileType: FileType, filePath: string): string {
+  const h = crypto.createHash("sha256");
+  // Bumping any of these ingredients invalidates old cache entries:
+  //   - kicadiff cache schema version (bump if directory layout changes)
+  //   - kicad-cli version (output may change between releases)
+  //   - file type (pcb/sch/sym/fp: different render args, different outputs)
+  //   - file path (different files at different paths get different caches
+  //     even if content is identical — paranoid by design, since kicad-cli's
+  //     output may also depend on sibling project files like .kicad_pro)
+  //   - sibling .kicad_pro / .kicad_prl content (theme/variant settings that
+  //     KiCad reads from the project root affect rendering even when the
+  //     .kicad_pcb / .kicad_sch content is unchanged)
+  //   - source content
+  h.update("kicadiff-cache-v2\0");
+  h.update(getKicadCliVersion());
+  h.update("\0");
+  h.update(fileType);
+  h.update("\0");
+  h.update(path.resolve(filePath));
+  h.update("\0");
+
+  // Project files only matter for pcb/sch — sym/fp are self-contained.
+  if (fileType === "pcb" || fileType === "sch") {
+    const dir = path.dirname(filePath);
+    try {
+      const siblings = fs.readdirSync(dir)
+        .filter(f => f.endsWith(".kicad_pro") || f.endsWith(".kicad_prl"))
+        .sort();
+      for (const f of siblings) {
+        h.update(f);
+        h.update("\0");
+        try { h.update(fs.readFileSync(path.join(dir, f))); } catch { /* ignore */ }
+        h.update("\0");
+      }
+    } catch { /* directory unreadable — proceed without sibling fingerprint */ }
+  }
+
+  h.update(content);
+  return h.digest("hex");
+}
+
+function cachePathFor(hash: string): string {
+  // Two-level dir to avoid millions of siblings in one folder
+  return path.join(getCacheRoot(), hash.slice(0, 2), hash.slice(2));
+}
+
+function extrasDirName(fileType: FileType, safe: string): string {
+  if (fileType === "pcb") return `layers_${safe}`;
+  if (fileType === "sch") return `sch_pages_${safe}`;
+  return `items_${safe}`; // sym, fp
+}
+
+/** Try to populate `<sideDir>/<safe>.png` and the type-specific extras dir
+ *  from a cached render. Returns true on cache hit, false on miss. */
+function loadFromCache(
+  hash: string,
+  sideDir: string,
+  safe: string,
+  fileType: FileType,
+): boolean {
+  const cacheDir = cachePathFor(hash);
+  const cachedCombined = path.join(cacheDir, "combined.png");
+  if (!fs.existsSync(cachedCombined)) return false;
+  fs.mkdirSync(sideDir, { recursive: true });
+  const targetPng = path.join(sideDir, `${safe}.png`);
+  fs.copyFileSync(cachedCombined, targetPng);
+  const cachedExtras = path.join(cacheDir, "extras");
+  if (fs.existsSync(cachedExtras)) {
+    const targetExtras = path.join(sideDir, extrasDirName(fileType, safe));
+    fs.cpSync(cachedExtras, targetExtras, { recursive: true });
+  }
+  return true;
+}
+
+/** Persist a freshly-rendered side into the cache. Best-effort: failures
+ *  (disk full, perms) are ignored — the user's render still succeeds. */
+function saveToCache(
+  hash: string,
+  sideDir: string,
+  safe: string,
+  fileType: FileType,
+): void {
+  const targetPng = path.join(sideDir, `${safe}.png`);
+  if (!fs.existsSync(targetPng)) return;
+  const cacheDir = cachePathFor(hash);
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.copyFileSync(targetPng, path.join(cacheDir, "combined.png"));
+    const extrasSrc = path.join(sideDir, extrasDirName(fileType, safe));
+    if (fs.existsSync(extrasSrc)) {
+      fs.cpSync(extrasSrc, path.join(cacheDir, "extras"), { recursive: true });
+    }
+  } catch {
+    // Cache write failures are non-fatal — the user has the rendered output already
+  }
+}
+
+/** Write `content` to a temp file beside `nearFile`, preserving its extension.
+ *  Used to give kicad-cli an on-disk path for git-extracted content (it can't
+ *  read from stdin). O_EXCL avoids races between parallel renders that share
+ *  a directory (notably `.pretty/` libraries with many footprints). */
+function writeContentToTempBeside(content: Buffer, nearFile: string): string {
+  const dir = path.dirname(nearFile);
+  const ext = path.extname(nearFile);
   for (let attempt = 0; attempt < 5; attempt++) {
     const rand = Math.random().toString(36).slice(2, 8);
     const tmp = path.join(dir, `preview_${rand}${ext}`);
     try {
-      // O_CREAT|O_EXCL prevents two concurrent calls from picking the same path
       const fd = fs.openSync(tmp, "wx");
-      fs.writeSync(fd, out);
+      fs.writeSync(fd, content);
       fs.closeSync(fd);
       return tmp;
     } catch (e) {
@@ -406,8 +545,13 @@ function buildManifest(args: {
   hasDiff?: boolean;
   diffPng?: string;
   schRootName?: string;
+  fromRef?: string;
+  toRef?: string;
 }): Manifest {
-  const { relPath, fileType, outputDir, safe, hasBefore, hasDiff, diffPng, schRootName } = args;
+  const {
+    relPath, fileType, outputDir, safe, hasBefore, hasDiff, diffPng, schRootName,
+    fromRef, toRef,
+  } = args;
 
   function buildSide(side: "before" | "after"): SideManifest {
     const out: SideManifest = { combined: `${side}/${safe}.png` };
@@ -426,6 +570,8 @@ function buildManifest(args: {
   const m: Manifest = { file: relPath, type: fileType, hasBefore, after: buildSide("after") };
   if (hasBefore) m.before = buildSide("before");
   if (hasDiff !== undefined) m.hasDiff = hasDiff;
+  if (fromRef !== undefined) m.fromRef = fromRef;
+  if (toRef !== undefined) m.toRef = toRef;
   if (diffPng && fs.existsSync(diffPng)) m.diff = `diff/${safe}.png`;
 
   // Per-page hasDiff: when the file has selectable pages (multi-sheet sch,
@@ -557,18 +703,47 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
       }
     }
 
+    // Cache: hash the source content so we hit even when rendering the same
+    // blob via a different ref or location. We read the content here both
+    // for hashing and (in the git-ref case) to avoid a second `git show`
+    // when writing the temp file.
+    const useCache = !opts.noCache;
+    let content: Buffer | null = null;
+    if (isWorkingTree(ref)) {
+      if (!fs.existsSync(filePath)) return false;
+      if (useCache) content = fs.readFileSync(filePath);
+    } else {
+      if (!repoRoot) return false;
+      content = gitReadAtRef(repoRoot, ref, relPath);
+      if (content === null) return false;
+    }
+
+    const cacheHash = (useCache && content !== null)
+      ? cacheKeyFor(content, fileType, filePath)
+      : null;
+
+    if (cacheHash && loadFromCache(cacheHash, sideDir, safe, fileType)) {
+      return fs.existsSync(targetPng);
+    }
+
     if (isWorkingTree(ref)) {
       await renderFromSource(filePath);
-      return fs.existsSync(targetPng);
+    } else {
+      // We already have content in memory — write to temp without a second
+      // git invocation. (gitShowToTempBeside duplicates this work, but we
+      // keep the helper for callers without pre-loaded content.)
+      const tempFile = writeContentToTempBeside(content!, filePath);
+      try {
+        await renderFromSource(tempFile);
+      } finally {
+        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      }
     }
-    if (!repoRoot || !gitHasFileAtRef(repoRoot, ref, relPath)) return false;
-    const tempFile = gitShowToTempBeside(repoRoot, ref, relPath, filePath);
-    try {
-      await renderFromSource(tempFile);
-      return fs.existsSync(targetPng);
-    } finally {
-      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+
+    if (cacheHash && fs.existsSync(targetPng)) {
+      saveToCache(cacheHash, sideDir, safe, fileType);
     }
+    return fs.existsSync(targetPng);
   }
 
   // --- Render after (target) and before (base) in parallel ---
@@ -614,6 +789,7 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
 
   const manifest = buildManifest({
     relPath, fileType, outputDir, safe, hasBefore, hasDiff, diffPng, schRootName,
+    fromRef, toRef,
   });
 
   const result: RenderResult = {
@@ -700,6 +876,9 @@ export interface ProjectRenderOptions {
   toRef?: string;
   imagesOnly?: boolean;
   open?: string;
+  /** Disable the per-side render cache (default: enabled). Useful when the
+   *  cache is suspected stale, or for benchmarking the uncached path. */
+  noCache?: boolean;
   /** Force single-file mode (set by `pcb`/`sch` subcommand). When set, only
    *  the file matching the scope is rendered, no sibling auto-detection. */
   scope?: FileType;
@@ -834,6 +1013,7 @@ export async function renderProject(opts: ProjectRenderOptions): Promise<Project
         fromRef: opts.fromRef,
         toRef: opts.toRef,
         imagesOnly: true, // we'll generate one combined HTML below
+        noCache: opts.noCache,
       }),
     ),
   );
@@ -899,6 +1079,8 @@ function rewriteManifestPaths(m: Manifest, outDir: string, htmlDir: string): Man
   };
   if (m.before) out.before = rewriteSide(m.before);
   if (m.hasDiff !== undefined) out.hasDiff = m.hasDiff;
+  if (m.fromRef !== undefined) out.fromRef = m.fromRef;
+  if (m.toRef !== undefined) out.toRef = m.toRef;
   if (m.diff) out.diff = rewrite(m.diff);
   return out;
 }

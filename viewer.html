@@ -9,6 +9,11 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
 .tabs{display:flex;gap:2px;margin-left:auto;flex-shrink:0}
 .tabs button{padding:4px 10px;background:#333;border:1px solid #555;color:#ccc;cursor:pointer;font-size:12px;border-radius:3px}
 .tabs button.active{background:#007acc;border-color:#007acc;color:#fff}
+/* Header-extras hosts secondary controls (diff highlight toggle, etc.) on
+   the same row as the title and view tabs. Margin-left keeps it tight to
+   the right edge after the .tabs auto-margin pushes things right. */
+.header-extras{display:flex;align-items:center;gap:12px;flex-shrink:0;font-size:12px}
+.header-extras label{display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap}
 
 /* --- Layer panel (KiCad/Photoshop style) ---
    Eye icon: toggles visibility independently
@@ -134,11 +139,12 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 </style>
 </head><body>
 
-<div class="file-tabs" id="file-tabs" style="display:none"></div>
 <header>
   <h1 id="title"></h1>
   <div class="tabs" id="view-tabs"></div>
+  <div class="header-extras" id="header-extras"></div>
 </header>
+<div class="file-tabs" id="file-tabs" style="display:none"></div>
 <div class="page-tabs" id="page-tabs" style="display:none"></div>
 <div class="layer-panel" id="layer-panel" style="display:none">
   <div class="layer-list" id="layer-list"></div>
@@ -234,6 +240,7 @@ function rebuildForCurrentFile() {
 
   // Clear UI from previous file (if any)
   $('#view-tabs').innerHTML = '';
+  $('#header-extras').innerHTML = '';
   $('#layer-list').innerHTML = '';
   $('#layer-extras').innerHTML = '';
   $('#layer-panel').style.display = 'none';
@@ -361,14 +368,13 @@ function buildTabs() {
 function buildLayerPanel() {
   const hasLayers = M.type === 'pcb' && M.after.layers;
   const hasDiff = M.diff && M.hasBefore;
-  if (!hasLayers && !hasDiff) return;
-
-  const panel = $('#layer-panel');
-  panel.style.display = 'flex';
+  // The panel itself is only useful when there are layers (PCB). The diff
+  // toggle lives in the header now, so sch/sym/fp don't need this panel.
+  if (hasLayers) {
+    const panel = $('#layer-panel');
+    panel.style.display = 'flex';
+  }
   const list = $('#layer-list');
-
-  // Hide the layer list entirely for schematics (no layers to show)
-  if (!hasLayers) list.style.display = 'none';
 
   const available = hasLayers ? LAYER_ORDER.filter(n => M.after.layers[n]) : [];
 
@@ -416,9 +422,11 @@ function buildLayerPanel() {
     if (defaultRow) defaultRow.classList.add('active');
   }
 
-  // Diff highlight toggle (works for both PCB and schematic)
-  const extras = $('#layer-extras');
+  // Diff highlight toggle goes into the header row (next to title and view
+  // tabs) so it's discoverable for sch/sym/fp where there's no layer panel
+  // at all. Works for any file type that has both before+after with a diff.
   if (hasDiff) {
+    const extras = $('#header-extras');
     const diffLbl = document.createElement('label');
     const diffCb = document.createElement('input');
     diffCb.type = 'checkbox';
@@ -444,6 +452,20 @@ function setView(id) {
   if (id === 'swp') requestAnimationFrame(() => positionSwipe());
 }
 
+/* Render a friendly label for a git ref. Used in pane labels and the
+   overlay/swipe legends. Empty/unset toRef means "working tree" (the
+   default — uncommitted edits in the file). */
+function refLabel(ref) {
+  if (ref === undefined || ref === null || ref === '') return 'working tree';
+  // Truncate full 40-char SHAs to 7 chars (git short-style); leave named
+  // refs (HEAD, main, tag names) untouched.
+  if (/^[0-9a-f]{40}$/i.test(ref)) return ref.slice(0, 7);
+  return ref;
+}
+
+const FROM_LABEL = () => refLabel(M.fromRef ?? 'HEAD');
+const TO_LABEL = () => refLabel(M.toRef ?? '');
+
 // --- Build views ---
 function buildViews() {
   const main = $('#main');
@@ -452,8 +474,8 @@ function buildViews() {
   // Side by side: panes with synchronized scrolling
   const sbs = document.createElement('div');
   sbs.id = 'view-sbs'; sbs.className = 'view sbs';
-  if (M.hasBefore) sbs.appendChild(makePane('before', 'Before (HEAD)'));
-  sbs.appendChild(makePane('after', M.hasBefore ? 'After (edited)' : 'Preview'));
+  if (M.hasBefore) sbs.appendChild(makePane('before', `Before (${FROM_LABEL()})`));
+  sbs.appendChild(makePane('after', M.hasBefore ? `After (${TO_LABEL()})` : 'Preview'));
   main.appendChild(sbs);
 
   // Synchronize scroll between side-by-side panes so the user
@@ -471,7 +493,18 @@ function buildViews() {
   if (M.hasBefore) {
     const ovlCtrl = document.createElement('div');
     ovlCtrl.className = 'ovl-controls';
-    ovlCtrl.innerHTML = '<span class="lbl-before">Before</span><input type="range" id="opacity-slider" min="0" max="100" value="100"><span class="lbl-after">After</span>';
+    // textContent on each span avoids accidental HTML injection if a ref name
+    // ever contained markup (unlikely, but git ref names allow many chars).
+    const lblBefore = document.createElement('span');
+    lblBefore.className = 'lbl-before';
+    lblBefore.textContent = `Before (${FROM_LABEL()})`;
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.id = 'opacity-slider';
+    slider.min = '0'; slider.max = '100'; slider.value = '100';
+    const lblAfter = document.createElement('span');
+    lblAfter.className = 'lbl-after';
+    lblAfter.textContent = `After (${TO_LABEL()})`;
+    ovlCtrl.append(lblBefore, slider, lblAfter);
     ovl.appendChild(ovlCtrl);
   }
   const ovlBody = document.createElement('div');
@@ -498,7 +531,15 @@ function buildViews() {
   if (M.hasBefore) {
     const swpCtrl = document.createElement('div');
     swpCtrl.className = 'swp-controls';
-    swpCtrl.innerHTML = '<span class="lbl-before">Before</span><span style="flex:1"></span><span class="lbl-after">After</span>';
+    const lblBefore = document.createElement('span');
+    lblBefore.className = 'lbl-before';
+    lblBefore.textContent = `Before (${FROM_LABEL()})`;
+    const spacer = document.createElement('span');
+    spacer.style.flex = '1';
+    const lblAfter = document.createElement('span');
+    lblAfter.className = 'lbl-after';
+    lblAfter.textContent = `After (${TO_LABEL()})`;
+    swpCtrl.append(lblBefore, spacer, lblAfter);
     swp.appendChild(swpCtrl);
   }
   const swpBody = document.createElement('div');
