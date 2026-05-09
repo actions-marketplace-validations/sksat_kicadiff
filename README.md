@@ -1,0 +1,100 @@
+# kicadiff
+
+Visual diff tool for KiCad projects — see what changed between two
+states of a `.kicad_pcb` / `.kicad_sch` / `.kicad_sym` / `.kicad_mod`
+file in your browser, or as a markdown report you can paste into a PR.
+
+[日本語版 README](./README.ja.md)
+
+## What you get
+
+- **HTML viewer** with side-by-side / overlay / swipe modes, layer toggles
+  for PCBs, page navigation for hierarchical schematics, wheel-to-zoom and
+  right-click-drag-to-pan, and an amber tab marker on files / pages whose
+  rendered output actually changed.
+- **Markdown report** (`--md`) with side-by-side image tables and a
+  structural component diff (added / removed / changed by reference
+  designator). Good for PR descriptions and commit messages.
+- **Text-only structural diff** (`--text-only`) — fast, no image
+  rendering, prints to stdout.
+
+## Requirements
+
+- [`kicad-cli`](https://www.kicad.org/) 9.x or later (rendering engine)
+- `rsvg-convert` (SVG → PNG)
+- `imagemagick` (`magick compare` is used for the highlight overlay; optional)
+- Node 25+ — runs the TypeScript CLI directly from its shebang. No
+  transpile step.
+
+## Usage
+
+`kicadiff` works on the same positional argument shape as `git diff`,
+plus a few subcommands when you want to scope to one file type.
+
+```sh
+# Project-level diff (cwd, both PCB and schematic, default = HEAD vs working tree)
+kicadiff
+
+# Pass a project root, a .kicad_pro, or any single KiCad file
+kicadiff path/to/project/
+kicadiff project.kicad_pro
+kicadiff project.kicad_pcb
+
+# Compare arbitrary refs
+kicadiff main path/to/project/         # working tree vs main
+kicadiff v1.0 v2.0 board.kicad_pcb     # v1.0 vs v2.0
+kicadiff main..feat foo.kicad_pcb      # range syntax
+kicadiff main -- foo.kicad_pcb         # explicit `--` separator
+
+# Subcommands scope to one file type (skip sibling auto-detect)
+kicadiff pcb foo.kicad_pcb
+kicadiff sch foo.kicad_sch       # alias: schematic
+kicadiff sym lib.kicad_sym       # alias: symbol
+kicadiff fp foo.kicad_mod        # alias: footprint
+kicadiff fp lib.pretty           # whole .pretty/ library
+
+# Output formats
+kicadiff project/                       # default: HTML viewer + images
+kicadiff project/ --md                  # markdown report + images, no HTML
+kicadiff project/ --md --output report.md
+kicadiff project/ --md --output -       # markdown to stdout, logs to stderr
+kicadiff project/ --text                # also print structural text diff
+kicadiff project/ --text-only           # text only, skip rendering (fast)
+kicadiff project/ --images-only         # PNGs only, no HTML / markdown
+
+# Auto-open the HTML in VSCode (Live Preview), a browser, etc.
+kicadiff project/ --open vscode
+kicadiff project/ --open firefox
+kicadiff project/ --open=/usr/bin/open  # arbitrary command
+
+# Other
+kicadiff project/ -v                    # verbose summary (full PNG paths)
+kicadiff project/ -q                    # suppress summary
+kicadiff project/ --no-cache            # bypass the render cache
+```
+
+## Output
+
+By default kicadiff writes to `<repo>/.claude/preview/` (next to the git
+root) so the directory is easy to find from the project. Override with
+`--output-dir <dir>` for the image directory, and `--output <path>` to
+relocate the HTML / markdown file specifically (image paths in the
+file get rewritten to be relative to it, so the file stays portable).
+
+The HTML viewer is a single file with the manifest + image references
+inline; you can email it, host it as a static asset, or open it
+locally with VSCode's Live Preview extension.
+
+## Render cache
+
+Every per-side render is content-addressed and cached under
+`$XDG_CACHE_HOME/kicadiff` (or `~/.cache/kicadiff`). Repeat runs
+against unchanged content return in ~1 s vs ~5 s cold. Bypass with
+`--no-cache` or override the location with `KICADIFF_CACHE_DIR`.
+
+## More
+
+- `DESIGN.md` — architecture, render pipeline, cache key shape,
+  manifest schema, viewer mode semantics
+- `examples/blink/` — minimal KiCad project used as the test fixture
+  and a usable starting point
