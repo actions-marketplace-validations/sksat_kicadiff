@@ -129,7 +129,15 @@ const KNOWN_OPEN_TARGETS = new Set([
 ]);
 
 /** True if `s` looks like a kicadiff input (kicad file, .kicad_pro, or
- *  an existing directory). Used to disambiguate input from refs. */
+ *  an existing directory). Used to disambiguate input from refs.
+ *
+ *  The slash-containing case is tricky: branch names commonly contain
+ *  slashes (`feature/foo`, `release/v1`), so we can't treat any slash as
+ *  "this is a path". Heuristic:
+ *    - explicit relative/absolute paths (`./x`, `../x`, `/x`, ends with `/`)
+ *    - paths that exist on disk
+ *  Anything else → falls through to ref handling, where `git rev-parse`
+ *  validates the name and reports a useful error if it isn't a ref either. */
 function isLikelyInput(s: string): boolean {
   if (
     s.endsWith(".kicad_pcb") ||
@@ -142,9 +150,16 @@ function isLikelyInput(s: string): boolean {
   ) {
     return true;
   }
-  // Any path containing a slash is treated as a path; avoids false-positives
-  // where a ref name happens to be a real directory in cwd.
-  if (s.includes("/") || s === ".") return true;
+  if (s === "." || s.startsWith("./") || s.startsWith("../") || s.startsWith("/") || s.endsWith("/")) {
+    return true;
+  }
+  // A bare slash-containing token might be a path or a branch name; only
+  // treat as input if it actually exists on disk. Existence wins over the
+  // ref name if both happen to coincide — explicit `--` separator can
+  // disambiguate that edge case.
+  if (s.includes("/")) {
+    try { return fs.existsSync(s); } catch { /* fall through */ }
+  }
   return false;
 }
 

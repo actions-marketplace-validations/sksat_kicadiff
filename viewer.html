@@ -244,9 +244,10 @@ function rebuildForCurrentFile() {
   activeLayer = null;
   showDiff = true;
   swipePct = 50;
-  // Overlay is the default whenever a before-state exists (most useful for
-  // spotting changes); side-by-side is the only option for new files.
-  currentView = M.hasBefore ? 'ovl' : 'sbs';
+  // Overlay is the default when both sides exist (most useful for spotting
+  // changes); side-by-side is the only option when one side is missing
+  // (new file or deleted at target ref).
+  currentView = (M.hasBefore && M.hasAfter !== false) ? 'ovl' : 'sbs';
   currentPage = 0;
 
   $('#title').textContent = M.file;
@@ -280,7 +281,10 @@ function rebuildForCurrentFile() {
  *  M.after.pages exists and has more than one entry. Page index 0 is
  *  the default (root sheet for sch, first symbol/footprint for sym/fp). */
 function buildPageTabs() {
-  const pages = (M.after && M.after.pages) || [];
+  // Page tabs come from whichever side actually rendered. Normally that's
+  // the after side; for files deleted at the target ref we fall back to
+  // before so the user can still navigate the historical page set.
+  const pages = M.after?.pages || M.before?.pages || [];
   const supports = (M.type === 'sch' || M.type === 'sym' || M.type === 'fp');
   if (!supports || pages.length <= 1) return;
   const bar = $('#page-tabs');
@@ -361,13 +365,14 @@ window.addEventListener('hashchange', () => {
 
 function buildTabs() {
   const tabs = $('#view-tabs');
-  // All three view modes are always available. Without a before-state to
-  // compare to, each mode collapses to "just show the rendered image" — the
-  // tabs stay so the file's UI is consistent across files (e.g. switching
-  // file-tabs from a diff'd file to a new file doesn't yank the controls).
-  // Overlay is the default and leftmost — it's the most useful for spotting
-  // changes when before is present.
-  const modes = [['ovl','Overlay'],['sbs','Side by Side'],['swp','Swipe']];
+  // Both sides need to exist for overlay/swipe to make sense — when one side
+  // is missing (new file, or deleted at the target ref) those modes collapse
+  // to a single image and we'd just show side-by-side. Default order with
+  // both sides: Overlay first (most useful for spotting changes).
+  const hasAfter = M.hasAfter !== false;
+  const modes = (M.hasBefore && hasAfter)
+    ? [['ovl','Overlay'],['sbs','Side by Side'],['swp','Swipe']]
+    : [['sbs','Side by Side']];
   modes.forEach(([id, label]) => {
     const btn = document.createElement('button');
     btn.textContent = label;
@@ -382,7 +387,11 @@ function buildTabs() {
    Schematic: only the diff toggle is shown (no layer concept)
    Hidden entirely if neither layers nor diff are available. */
 function buildLayerPanel() {
-  const hasLayers = M.type === 'pcb' && M.after.layers;
+  // Layer panel sources its layer list from after.layers (when present).
+  // For deleted-at-target files we still want to expose the same toggles
+  // against the before side; fall back to before.layers in that case.
+  const layersSource = M.after?.layers || M.before?.layers;
+  const hasLayers = M.type === 'pcb' && layersSource;
   const hasDiff = M.diff && M.hasBefore;
   // The panel itself is only useful when there are layers (PCB). The diff
   // toggle lives in the header now, so sch/sym/fp don't need this panel.
@@ -392,7 +401,7 @@ function buildLayerPanel() {
   }
   const list = $('#layer-list');
 
-  const available = hasLayers ? LAYER_ORDER.filter(n => M.after.layers[n]) : [];
+  const available = hasLayers ? LAYER_ORDER.filter(n => layersSource[n]) : [];
 
   available.forEach(name => {
     layerVisible[name] = true;
@@ -584,11 +593,22 @@ function buildViews() {
   const main = $('#main');
   main.innerHTML = '';
 
-  // Side by side: panes with synchronized scrolling
+  // Side by side: panes with synchronized scrolling.
+  // hasAfter defaults to true when omitted (older manifests / new files
+  // always have an after side); when explicitly false the file was deleted
+  // at the target ref and we show only the before pane.
+  const hasAfter = M.hasAfter !== false;
   const sbs = document.createElement('div');
   sbs.id = 'view-sbs'; sbs.className = 'view sbs';
-  if (M.hasBefore) sbs.appendChild(makePane('before', `Before (${FROM_LABEL()})`));
-  sbs.appendChild(makePane('after', M.hasBefore ? `After (${TO_LABEL()})` : 'Preview'));
+  if (M.hasBefore) {
+    const beforeLabel = hasAfter
+      ? `Before (${FROM_LABEL()})`
+      : `Before (${FROM_LABEL()}) — deleted in ${TO_LABEL()}`;
+    sbs.appendChild(makePane('before', beforeLabel));
+  }
+  if (hasAfter) {
+    sbs.appendChild(makePane('after', M.hasBefore ? `After (${TO_LABEL()})` : 'Preview'));
+  }
   main.appendChild(sbs);
 
   // Synchronize scroll between side-by-side panes so the user
@@ -598,88 +618,73 @@ function buildViews() {
     syncScroll([...paneBodies]);
   }
 
-  // Overlay: with before → before+after stacked + opacity slider.
-  //          without before → just the after image; the slider/legend would
-  //          have nothing to blend, so we skip the controls bar entirely.
-  const ovl = document.createElement('div');
-  ovl.id = 'view-ovl'; ovl.className = 'view ovl';
-  if (M.hasBefore) {
+  // Overlay and Swipe both need before AND after — they're comparison
+  // modes. Skip them entirely for new files (no before) or deleted files
+  // (no after); buildTabs() already omits the matching tabs.
+  const bothSides = M.hasBefore && M.hasAfter !== false;
+  if (bothSides) {
+    // Overlay: before + after stacked + opacity slider.
+    const ovl = document.createElement('div');
+    ovl.id = 'view-ovl'; ovl.className = 'view ovl';
     const ovlCtrl = document.createElement('div');
     ovlCtrl.className = 'ovl-controls';
     // textContent on each span avoids accidental HTML injection if a ref name
     // ever contained markup (unlikely, but git ref names allow many chars).
-    const lblBefore = document.createElement('span');
-    lblBefore.className = 'lbl-before';
-    lblBefore.textContent = `Before (${FROM_LABEL()})`;
+    const ovlLblBefore = document.createElement('span');
+    ovlLblBefore.className = 'lbl-before';
+    ovlLblBefore.textContent = `Before (${FROM_LABEL()})`;
     const slider = document.createElement('input');
     slider.type = 'range'; slider.id = 'opacity-slider';
     slider.min = '0'; slider.max = '100'; slider.value = '100';
-    const lblAfter = document.createElement('span');
-    lblAfter.className = 'lbl-after';
-    lblAfter.textContent = `After (${TO_LABEL()})`;
-    ovlCtrl.append(lblBefore, slider, lblAfter);
+    const ovlLblAfter = document.createElement('span');
+    ovlLblAfter.className = 'lbl-after';
+    ovlLblAfter.textContent = `After (${TO_LABEL()})`;
+    ovlCtrl.append(ovlLblBefore, slider, ovlLblAfter);
     ovl.appendChild(ovlCtrl);
-  }
-  const ovlBody = document.createElement('div');
-  ovlBody.className = 'ovl-body';
-  const ovlWrap = document.createElement('div');
-  ovlWrap.className = 'compare-wrap';
-  if (M.hasBefore) {
+    const ovlBody = document.createElement('div');
+    ovlBody.className = 'ovl-body';
+    const ovlWrap = document.createElement('div');
+    ovlWrap.className = 'compare-wrap';
     ovlWrap.appendChild(makeLayerStack('before', 'ovl-before'));
     const ovlOver = document.createElement('div');
     ovlOver.className = 'over-stack'; ovlOver.id = 'ovl-over';
     ovlOver.appendChild(makeLayerStack('after', 'ovl-after'));
     ovlWrap.appendChild(ovlOver);
-  } else {
-    ovlWrap.appendChild(makeLayerStack('after', 'ovl-after'));
-  }
-  ovlBody.appendChild(ovlWrap);
-  ovl.appendChild(ovlBody);
-  main.appendChild(ovl);
+    ovlBody.appendChild(ovlWrap);
+    ovl.appendChild(ovlBody);
+    main.appendChild(ovl);
 
-  // Swipe: with before → before+after with clip-path divider.
-  //        without before → just the after image; no divider/clip.
-  const swp = document.createElement('div');
-  swp.id = 'view-swp'; swp.className = 'view swp';
-  if (M.hasBefore) {
+    // Swipe: before + after with clip-path divider.
+    const swp = document.createElement('div');
+    swp.id = 'view-swp'; swp.className = 'view swp';
     const swpCtrl = document.createElement('div');
     swpCtrl.className = 'swp-controls';
-    const lblBefore = document.createElement('span');
-    lblBefore.className = 'lbl-before';
-    lblBefore.textContent = `Before (${FROM_LABEL()})`;
+    const swpLblBefore = document.createElement('span');
+    swpLblBefore.className = 'lbl-before';
+    swpLblBefore.textContent = `Before (${FROM_LABEL()})`;
     const spacer = document.createElement('span');
     spacer.style.flex = '1';
-    const lblAfter = document.createElement('span');
-    lblAfter.className = 'lbl-after';
-    lblAfter.textContent = `After (${TO_LABEL()})`;
-    swpCtrl.append(lblBefore, spacer, lblAfter);
+    const swpLblAfter = document.createElement('span');
+    swpLblAfter.className = 'lbl-after';
+    swpLblAfter.textContent = `After (${TO_LABEL()})`;
+    swpCtrl.append(swpLblBefore, spacer, swpLblAfter);
     swp.appendChild(swpCtrl);
-  }
-  const swpBody = document.createElement('div');
-  swpBody.className = 'swp-body'; swpBody.id = 'swipe-body';
-  const swpWrap = document.createElement('div');
-  swpWrap.className = 'compare-wrap'; swpWrap.id = 'swipe-wrap';
-  if (M.hasBefore) {
+    const swpBody = document.createElement('div');
+    swpBody.className = 'swp-body'; swpBody.id = 'swipe-body';
+    const swpWrap = document.createElement('div');
+    swpWrap.className = 'compare-wrap'; swpWrap.id = 'swipe-wrap';
     swpWrap.appendChild(makeLayerStack('after', 'swp-after'));
     const swpOver = document.createElement('div');
     swpOver.className = 'over-stack'; swpOver.id = 'swp-over';
     swpOver.appendChild(makeLayerStack('before', 'swp-before'));
     swpWrap.appendChild(swpOver);
-  } else {
-    swpWrap.appendChild(makeLayerStack('after', 'swp-after'));
-  }
-  swpBody.appendChild(swpWrap);
-  swp.appendChild(swpBody);
-  if (M.hasBefore) {
+    swpBody.appendChild(swpWrap);
+    swp.appendChild(swpBody);
     const divider = document.createElement('div');
     divider.className = 'divider'; divider.id = 'swipe-divider';
     swp.appendChild(divider);
-  }
-  main.appendChild(swp);
+    main.appendChild(swp);
 
-  // Wire interactive bits only when before exists — without it, slider/swipe
-  // have nothing to do.
-  if (M.hasBefore) {
     $('#opacity-slider').addEventListener('input', e => {
       $('#ovl-over').style.opacity = e.target.value / 100;
     });
@@ -731,7 +736,10 @@ function makeLayerStack(side, id) {
     // therefore compare against the wrong before-side page. Falls back to
     // `combined` when the side has no matching page (e.g. removed sheet).
     const img = document.createElement('img');
-    const wantName = M.after?.pages?.[currentPage]?.name;
+    // Active page name from whichever side has the page list (normally
+    // after; falls back to before for deleted-at-target files).
+    const tabPages = M.after?.pages || M.before?.pages;
+    const wantName = tabPages?.[currentPage]?.name;
     let pageSrc;
     if (wantName && data.pages) {
       const match = data.pages.find(p => p.name === wantName);

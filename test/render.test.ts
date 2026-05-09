@@ -14,28 +14,36 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  */
 
 const PROJECT_DIR = path.resolve(__dirname, "..");
-const REPO_ROOT = path.resolve(PROJECT_DIR, "..");
 const CLI = path.join(PROJECT_DIR, "kicadiff");
-// Self-contained example used as the primary test fixture. Lives inside the
-// kicadiff project so tests don't depend on a sibling project (they used to
-// reference ../PicoBridge, which made tests harder to run on a fresh clone).
+// Self-contained fixtures inside kicadiff/ so tests don't depend on
+// anything outside the project — the directory is intended to be split
+// out into its own repository at some point.
 const PROJECT_FIXTURE_DIR = path.join(PROJECT_DIR, "examples/blink");
 const PCB_FILE = path.join(PROJECT_FIXTURE_DIR, "blink.kicad_pcb");
 const SCH_FILE = path.join(PROJECT_FIXTURE_DIR, "blink.kicad_sch");
 const PRO_FILE = path.join(PROJECT_FIXTURE_DIR, "blink.kicad_pro");
-const SAFE_PCB = "kicadiff_examples_blink_blink.kicad_pcb";
-const SAFE_SCH = "kicadiff_examples_blink_blink.kicad_sch";
+// safe names mirror the production safeName(): repo-relative path with
+// non-[a-zA-Z0-9._-] replaced by `_`. We compute these dynamically
+// because the prefix differs depending on whether kicadiff sits inside
+// a parent repo (e.g. `kicadiff_examples_...`) or has been extracted to
+// its own repo (`examples_...`).
+const _gitTopLevel = execFileSync(
+  "git", ["-C", PROJECT_FIXTURE_DIR, "rev-parse", "--show-toplevel"],
+  { encoding: "utf8" },
+).trim();
+const _toSafe = (abs: string) => path.relative(_gitTopLevel, abs).replace(/[^a-zA-Z0-9._-]/g, "_");
+const SAFE_PCB = _toSafe(PCB_FILE);
+const SAFE_SCH = _toSafe(SCH_FILE);
 const PROJECT_HTML = "blink_diff.html"; // combined HTML name from projectSafeName
 
-/** Run kicadiff CLI and return its exit code, capturing stderr for diagnostics.
- *  CLI is a symlink to src/index.ts with `#!/usr/bin/env node` shebang —
- *  Node 25+ runs TS directly. */
+/** Run kicadiff CLI from PROJECT_DIR (the kicadiff/ directory), so paths
+ *  in the test stay inside the project tree. */
 function runCli(
   args: string[],
   options: { allowFailure?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): { status: number; stderr: string } {
   const r = spawnSync(CLI, args, {
-    cwd: REPO_ROOT,
+    cwd: PROJECT_DIR,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: options.env ?? process.env,
@@ -560,7 +568,7 @@ test.describe("--text-only", () => {
   /** Run CLI capturing stdout (--text-only writes the diff there). */
   function runWithStdout(args: string[]): { status: number; stdout: string } {
     const r = spawnSync(CLI, args, {
-      cwd: REPO_ROOT,
+      cwd: PROJECT_DIR,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -606,14 +614,14 @@ test.describe("--text-only", () => {
 // Symbol library (.kicad_sym) and footprint (.kicad_mod) rendering
 // =============================================================================
 
-const SYM_LIB = path.join(REPO_ROOT, "kicad-lib/jlc-basic.kicad_sym");
-const FP_FILE = path.join(REPO_ROOT, "kicad-lib/jlc-basic.pretty/C0402.kicad_mod");
+const SYM_LIB = path.join(PROJECT_DIR, "examples/lib/example.kicad_sym");
+const FP_FILE = path.join(PROJECT_DIR, "examples/lib/example.pretty/R_0805.kicad_mod");
 
 test.describe("symbol library rendering", () => {
   test("`sym` subcommand renders one PNG per symbol", () => {
     if (!fs.existsSync(SYM_LIB)) test.skip();
     runCli(["sym", SYM_LIB, "--output-dir", outputDir]);
-    const safe = "kicad-lib_jlc-basic.kicad_sym";
+    const safe = _toSafe(SYM_LIB);
     const itemsDir = path.join(outputDir, `after/items_${safe}`);
     expect(fs.existsSync(itemsDir)).toBe(true);
     const pngs = fs.readdirSync(itemsDir).filter(f => f.endsWith(".png"));
@@ -642,10 +650,10 @@ test.describe("footprint rendering", () => {
   test("`fp` subcommand renders a single .kicad_mod", () => {
     if (!fs.existsSync(FP_FILE)) test.skip();
     runCli(["fp", FP_FILE, "--output-dir", outputDir]);
-    const safe = "kicad-lib_jlc-basic.pretty_C0402.kicad_mod";
+    const safe = _toSafe(FP_FILE);
     expect(fs.existsSync(path.join(outputDir, `after/${safe}.png`))).toBe(true);
     const itemsDir = path.join(outputDir, `after/items_${safe}`);
-    expect(fs.existsSync(path.join(itemsDir, "C0402.png"))).toBe(true);
+    expect(fs.existsSync(path.join(itemsDir, "R_0805.png"))).toBe(true);
   });
 
   test("`footprint` is an alias for `fp`", () => {

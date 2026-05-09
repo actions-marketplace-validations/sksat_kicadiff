@@ -604,6 +604,7 @@ function buildManifest(args: {
   outputDir: string;
   safe: string;
   hasBefore: boolean;
+  hasAfter: boolean;
   hasDiff?: boolean;
   diffPng?: string;
   schRootName?: string;
@@ -611,7 +612,7 @@ function buildManifest(args: {
   toRef?: string;
 }): Manifest {
   const {
-    relPath, fileType, outputDir, safe, hasBefore, hasDiff, diffPng, schRootName,
+    relPath, fileType, outputDir, safe, hasBefore, hasAfter, hasDiff, diffPng, schRootName,
     fromRef, toRef,
   } = args;
 
@@ -629,8 +630,13 @@ function buildManifest(args: {
     return out;
   }
 
-  const m: Manifest = { file: relPath, type: fileType, hasBefore, after: buildSide("after") };
+  const m: Manifest = { file: relPath, type: fileType, hasBefore };
+  if (hasAfter) m.after = buildSide("after");
   if (hasBefore) m.before = buildSide("before");
+  // Always echo hasAfter so the viewer can branch on it (hasBefore was
+  // already required, but hasAfter is a recent addition — emit it
+  // explicitly so older manifests aren't ambiguous).
+  m.hasAfter = hasAfter;
   if (hasDiff !== undefined) m.hasDiff = hasDiff;
   if (fromRef !== undefined) m.fromRef = fromRef;
   if (toRef !== undefined) m.toRef = toRef;
@@ -640,7 +646,7 @@ function buildManifest(args: {
   // sym/fp libraries with multiple items), mark each "after" page with whether
   // its rendered PNG differs from the before-side page of the same name.
   // The viewer uses this to color page-tabs of changed pages.
-  if (m.after.pages && m.before?.pages) {
+  if (m.after?.pages && m.before?.pages) {
     const beforeByName = new Map(m.before.pages.map(p => [p.name, p.png]));
     for (const page of m.after.pages) {
       const beforeRel = beforeByName.get(page.name);
@@ -654,7 +660,7 @@ function buildManifest(args: {
         page.hasDiff = true;
       }
     }
-  } else if (m.after.pages && !m.before?.pages) {
+  } else if (m.after?.pages && !m.before?.pages) {
     // No before context → every page is "new"
     for (const page of m.after.pages) page.hasDiff = true;
   }
@@ -738,6 +744,21 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     const sideDir = path.join(outputDir, side);
     const schPagesDir = path.join(sideDir, `sch_pages_${safe}`);
     const itemPagesDir = path.join(sideDir, `items_${safe}`);
+
+    // Wipe any stale per-file outputs from a previous run before rendering /
+    // restoring from cache. Without this, a sheet (or sym/fp item) that was
+    // present last time but has since been removed or renamed would still
+    // surface as a tab (buildSchPages / buildItemPages list the dir
+    // contents). Same logic: a previous render might have left a different
+    // file's outputs at the same paths.
+    {
+      const combined = path.join(sideDir, `${safe}.png`);
+      if (fs.existsSync(combined)) try { fs.unlinkSync(combined); } catch { /* */ }
+      for (const dir of [layersDir, schPagesDir, itemPagesDir]) {
+        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
     // Use the original schematic basename for stable page names across sides
     // (before-side may render from a temp file with a different basename).
     const schRootName = fileType === "sch"
@@ -854,15 +875,22 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
 
   // --- Render after (target) and before (base) in parallel ---
   // Each side runs combined||layers internally for further speedup.
-  const [afterOk, hasBefore] = await Promise.all([
+  const [hasAfter, hasBefore] = await Promise.all([
     renderSide(toRef, "after", afterSvg, afterPng),
     renderSide(fromRef, "before", beforeSvg, beforePng),
   ]);
-  if (!afterOk) throw new Error(`failed to render after side (ref="${toRef}")`);
+  // A file deleted at the target ref still produces a usable diff: render
+  // the before side and show that, with the viewer marking it as "deleted".
+  // We only fail when neither side rendered (file missing at both refs).
+  if (!hasAfter && !hasBefore) {
+    throw new Error(`failed to render either side (file may not exist at any of the refs)`);
+  }
 
   // --- Diff highlight (optional, requires ImageMagick) ---
+  // Only meaningful when both sides exist; with a new or deleted file the
+  // overlay has nothing to compare against.
   let diffPng: string | undefined;
-  if (hasBefore && hasCommand("magick")) {
+  if (hasAfter && hasBefore && hasCommand("magick")) {
     const diffDir = path.join(outputDir, "diff");
     fs.mkdirSync(diffDir, { recursive: true });
     diffPng = path.join(diffDir, `${safe}.png`);
@@ -885,21 +913,22 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
   // Detect whether the rendering actually changed. Two PNGs that are
   // byte-identical mean the visual diff is empty even if the source files
   // are textually different (e.g. a reformat or a comment edit).
-  // hasDiff = true when there's no before to compare to (= new file).
-  let hasDiff = !hasBefore;
-  if (hasBefore && fs.existsSync(beforePng) && fs.existsSync(afterPng)) {
+  // hasDiff = true when one side is missing (new or deleted file).
+  let hasDiff = !hasBefore || !hasAfter;
+  if (hasBefore && hasAfter && fs.existsSync(beforePng) && fs.existsSync(afterPng)) {
     const beforeBuf = fs.readFileSync(beforePng);
     const afterBuf = fs.readFileSync(afterPng);
     hasDiff = !beforeBuf.equals(afterBuf);
   }
 
   const manifest = buildManifest({
-    relPath, fileType, outputDir, safe, hasBefore, hasDiff, diffPng, schRootName,
+    relPath, fileType, outputDir, safe, hasBefore, hasAfter, hasDiff, diffPng, schRootName,
     fromRef, toRef,
   });
 
   const result: RenderResult = {
-    filePath, relPath, fileType, outputDir, afterPng,
+    filePath, relPath, fileType, outputDir,
+    afterPng: hasAfter ? afterPng : "",
     beforePng: hasBefore ? beforePng : undefined,
     diffPng,
     manifest,
@@ -1202,9 +1231,10 @@ function rewriteManifestPaths(m: Manifest, outDir: string, htmlDir: string): Man
     file: m.file,
     type: m.type,
     hasBefore: m.hasBefore,
-    after: rewriteSide(m.after),
   };
+  if (m.after) out.after = rewriteSide(m.after);
   if (m.before) out.before = rewriteSide(m.before);
+  if (m.hasAfter !== undefined) out.hasAfter = m.hasAfter;
   if (m.hasDiff !== undefined) out.hasDiff = m.hasDiff;
   if (m.fromRef !== undefined) out.fromRef = m.fromRef;
   if (m.toRef !== undefined) out.toRef = m.toRef;

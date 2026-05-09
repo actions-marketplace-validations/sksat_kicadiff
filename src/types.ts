@@ -37,6 +37,10 @@ export interface FileManifest {
   type: FileType;
   /** Whether the before state was successfully rendered from git HEAD */
   hasBefore: boolean;
+  /** Whether the after state was successfully rendered (false when the file
+   *  is deleted at the target ref). When false, `after` is omitted and the
+   *  viewer falls back to showing only the before side. */
+  hasAfter?: boolean;
   /** True if the visual output actually changed between before and after.
    *  Computed by comparing the combined PNG bytes — survives noise that doesn't
    *  affect rendering (whitespace, comment changes). Used by the viewer to
@@ -49,7 +53,7 @@ export interface FileManifest {
   /** Git ref used as the after side. Empty string ("") means working tree —
    *  the viewer renders this as "working tree" or "edited". */
   toRef?: string;
-  after: SideManifest;
+  after?: SideManifest;
   before?: SideManifest;
   /** Diff highlight image (ImageMagick compare output), present only if both
    *  before and after were rendered and ImageMagick is available */
