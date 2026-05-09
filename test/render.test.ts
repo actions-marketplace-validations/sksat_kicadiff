@@ -419,3 +419,175 @@ test.describe("combined PCB + schematic", () => {
     expect(types).toEqual(["pcb", "sch"]);
   });
 });
+
+// =============================================================================
+// Multi-sheet schematic — pages field in manifest (length >= 1, root first)
+// =============================================================================
+
+test.describe("schematic pages", () => {
+  test("manifest includes a pages array with the root sheet", () => {
+    if (!fs.existsSync(SCH_FILE)) test.skip();
+    runCli(["sch", SCH_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    const sch = m.files.find((f: any) => f.type === "sch");
+    expect(sch).toBeTruthy();
+    expect(Array.isArray(sch.after.pages)).toBe(true);
+    expect(sch.after.pages.length).toBeGreaterThanOrEqual(1);
+    // Root page name = schematic basename
+    expect(sch.after.pages[0].name).toBe("PicoBridge");
+  });
+
+  test("before- and after-side page names match (stable across temp files)", () => {
+    if (!fs.existsSync(SCH_FILE)) test.skip();
+    runCli(["sch", SCH_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    const sch = m.files[0];
+    if (!sch.before?.pages) return;
+    const after = sch.after.pages.map((p: any) => p.name);
+    const before = sch.before.pages.map((p: any) => p.name);
+    expect(before).toEqual(after);
+  });
+});
+
+// =============================================================================
+// --output flag: HTML at custom path, image paths rewritten to relative
+// =============================================================================
+
+test.describe("--output flag", () => {
+  test("writes HTML to the specified path with relative image paths", () => {
+    const htmlPath = path.join(outputDir, "custom/diff.html");
+    runCli([PCB_FILE, "--output-dir", outputDir, "--output", htmlPath]);
+    expect(fs.existsSync(htmlPath)).toBe(true);
+    // Default location should NOT be used
+    expect(fs.existsSync(path.join(outputDir, PROJECT_HTML))).toBe(false);
+    const m = readManifest(htmlPath) as any;
+    // Image paths must resolve from the HTML's directory ("../after/...")
+    expect(m.files[0].after.combined).toMatch(/^\.\.\/after\//);
+  });
+
+  test("--output=<path> works via `=` syntax", () => {
+    const htmlPath = path.join(outputDir, "diff.html");
+    runCli([PCB_FILE, "--output-dir", outputDir, `--output=${htmlPath}`]);
+    expect(fs.existsSync(htmlPath)).toBe(true);
+  });
+
+  test("-o is an alias for --output", () => {
+    const htmlPath = path.join(outputDir, "diff.html");
+    runCli([PCB_FILE, "--output-dir", outputDir, "-o", htmlPath]);
+    expect(fs.existsSync(htmlPath)).toBe(true);
+  });
+});
+
+// =============================================================================
+// --text-only: structural text diff (no SVG/PNG/HTML)
+// =============================================================================
+
+test.describe("--text-only", () => {
+  /** Run CLI capturing stdout (--text-only writes the diff there). */
+  function runWithStdout(args: string[]): { status: number; stdout: string } {
+    const r = spawnSync(CLI, args, {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { status: r.status ?? 1, stdout: r.stdout ?? "" };
+  }
+
+  test("prints summary line for PCB and skips HTML/PNG generation", () => {
+    const r = runWithStdout(["--text-only", PCB_FILE]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/PicoBridge\.kicad_pcb \(pcb\): \+\d+ -\d+ ~\d+ =\d+/);
+    // No images or HTML produced
+    expect(fs.existsSync(path.join(outputDir, PROJECT_HTML))).toBe(false);
+  });
+
+  test("detects value changes in modified PCB", () => {
+    // Create an isolated git repo with a modified PCB to verify diff detection
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "kicadiff-textdiff-"));
+    try {
+      fs.cpSync(path.dirname(PCB_FILE), tmp, { recursive: true });
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: tmp });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.email=t@t",
+        "-c", "user.name=t", "add", "."], { cwd: tmp });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.email=t@t",
+        "-c", "user.name=t", "commit", "-q", "-m", "init"], { cwd: tmp });
+      const pcbInTmp = path.join(tmp, path.basename(PCB_FILE));
+      const orig = fs.readFileSync(pcbInTmp, "utf8");
+      fs.writeFileSync(pcbInTmp, orig.replace(/100nF/g, "200nF"));
+
+      const r = spawnSync(CLI, ["--text-only", pcbInTmp], {
+        cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/~\s*C\d+\s+value: 100nF → 200nF/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+// =============================================================================
+// Symbol library (.kicad_sym) and footprint (.kicad_mod) rendering
+// =============================================================================
+
+const SYM_LIB = path.join(REPO_ROOT, "kicad-lib/jlc-basic.kicad_sym");
+const FP_FILE = path.join(REPO_ROOT, "kicad-lib/jlc-basic.pretty/C0402.kicad_mod");
+
+test.describe("symbol library rendering", () => {
+  test("`sym` subcommand renders one PNG per symbol", () => {
+    if (!fs.existsSync(SYM_LIB)) test.skip();
+    runCli(["sym", SYM_LIB, "--output-dir", outputDir]);
+    const safe = "kicad-lib_jlc-basic.kicad_sym";
+    const itemsDir = path.join(outputDir, `after/items_${safe}`);
+    expect(fs.existsSync(itemsDir)).toBe(true);
+    const pngs = fs.readdirSync(itemsDir).filter(f => f.endsWith(".png"));
+    expect(pngs.length).toBeGreaterThan(1);
+  });
+
+  test("manifest exposes pages list for sym file type", () => {
+    if (!fs.existsSync(SYM_LIB)) test.skip();
+    runCli(["sym", SYM_LIB, "--output-dir", outputDir]);
+    const htmls = fs.readdirSync(outputDir).filter(f => f.endsWith("_diff.html"));
+    const m = readManifest(path.join(outputDir, htmls[0])) as any;
+    expect(m.files[0].type).toBe("sym");
+    expect(Array.isArray(m.files[0].after.pages)).toBe(true);
+    expect(m.files[0].after.pages.length).toBeGreaterThan(1);
+  });
+
+  test("`symbol` is an alias for `sym`", () => {
+    if (!fs.existsSync(SYM_LIB)) test.skip();
+    runCli(["symbol", SYM_LIB, "--output-dir", outputDir]);
+    const htmls = fs.readdirSync(outputDir).filter(f => f.endsWith("_diff.html"));
+    expect(htmls.length).toBeGreaterThan(0);
+  });
+});
+
+test.describe("footprint rendering", () => {
+  test("`fp` subcommand renders a single .kicad_mod", () => {
+    if (!fs.existsSync(FP_FILE)) test.skip();
+    runCli(["fp", FP_FILE, "--output-dir", outputDir]);
+    const safe = "kicad-lib_jlc-basic.pretty_C0402.kicad_mod";
+    expect(fs.existsSync(path.join(outputDir, `after/${safe}.png`))).toBe(true);
+    const itemsDir = path.join(outputDir, `after/items_${safe}`);
+    expect(fs.existsSync(path.join(itemsDir, "C0402.png"))).toBe(true);
+  });
+
+  test("`footprint` is an alias for `fp`", () => {
+    if (!fs.existsSync(FP_FILE)) test.skip();
+    runCli(["footprint", FP_FILE, "--output-dir", outputDir]);
+    const htmls = fs.readdirSync(outputDir).filter(f => f.endsWith("_diff.html"));
+    expect(htmls.length).toBeGreaterThan(0);
+  });
+
+  test("`fp` subcommand accepts a .pretty directory and renders all footprints", () => {
+    const prettyDir = path.dirname(FP_FILE);
+    if (!fs.existsSync(prettyDir)) test.skip();
+    runCli(["fp", prettyDir, "--output-dir", outputDir]);
+    const htmls = fs.readdirSync(outputDir).filter(f => f.endsWith("_diff.html"));
+    expect(htmls.length).toBeGreaterThan(0);
+    const m = readManifest(path.join(outputDir, htmls[0])) as any;
+    // Multiple .kicad_mod files = multiple file entries
+    expect(m.files.length).toBeGreaterThan(1);
+    expect(m.files.every((f: any) => f.type === "fp")).toBe(true);
+  });
+});

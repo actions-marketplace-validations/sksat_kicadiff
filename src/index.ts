@@ -13,7 +13,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { renderProject, printSummary } from "./render.ts";
+import { renderProject, printSummary, resolveInputs } from "./render.ts";
+import { textDiff } from "./textdiff.ts";
 import type { FileType } from "./types.ts";
 
 function usage(): void {
@@ -27,13 +28,19 @@ Subcommands:
   pcb        Render only the PCB diff (.kicad_pcb file required)
   sch        Render only the schematic diff (.kicad_sch file required)
   schematic  Alias for \`sch\`
+  sym        Render only the symbol library diff (.kicad_sym file required)
+  symbol     Alias for \`sym\`
+  fp         Render footprint diff (.kicad_mod file or .pretty/ directory)
+  footprint  Alias for \`fp\`
 
 Inputs (positional):
   <input>    One of:
                - <file.kicad_pcb> / <file.kicad_sch>  (single file; sibling of
                  the other type is auto-included unless a subcommand scopes it)
+               - <file.kicad_sym> / <file.kicad_mod>  (single library / footprint)
+               - <dir.pretty>                          (footprint library directory)
                - <file.kicad_pro>                      (KiCad project file)
-               - <directory>                           (find both files in dir)
+               - <directory>                           (find all files in dir)
                - (omitted)                             (current working dir)
 
 Refs (positional, git diff-compatible):
@@ -45,8 +52,12 @@ Refs (positional, git diff-compatible):
 Options:
   --from <ref>           Base ref (alternative to positional)
   --to <ref>             Target ref (alternative to positional; default: working tree)
-  --output-dir <dir>     Output directory (default: <repo>/.claude/preview)
+  --output-dir <dir>     Image output directory (default: <repo>/.claude/preview)
+  -o, --output <path>    Diff HTML output path (default: <output-dir>/<name>_diff.html).
+                         Image paths in the HTML are made relative to <path>'s dir.
   --images-only          Skip HTML generation and auto-open
+  --text                 Also print a structural text diff to stdout
+  --text-only            Print only the text diff (no SVG/PNG/HTML rendering — fast)
   --open                 Open diff HTML with xdg-open after rendering
   --open vscode|code     Open in VSCode tab (\`code -r\`)
   --open firefox|...     Open in named browser (firefox, chromium, chrome, etc.)
@@ -75,7 +86,15 @@ interface ParsedArgs {
   fromRef?: string;
   toRef?: string;
   outputDir?: string;
+  /** Explicit path for the combined diff HTML file. When set, manifest image
+   *  paths are emitted relative to the HTML's directory. */
+  outputHtml?: string;
   imagesOnly?: boolean;
+  /** Print structural text diff to stdout. Cheap (no SVG/PNG rendering).
+   *  When also producing HTML/images, the text appears alongside. */
+  text?: boolean;
+  /** Skip HTML/image rendering — only print the text diff. */
+  textOnly?: boolean;
   scope?: FileType;
   open?: string;
 }
@@ -91,7 +110,15 @@ const KNOWN_OPEN_TARGETS = new Set([
 /** True if `s` looks like a kicadiff input (kicad file, .kicad_pro, or
  *  an existing directory). Used to disambiguate input from refs. */
 function isLikelyInput(s: string): boolean {
-  if (s.endsWith(".kicad_pcb") || s.endsWith(".kicad_sch") || s.endsWith(".kicad_pro")) {
+  if (
+    s.endsWith(".kicad_pcb") ||
+    s.endsWith(".kicad_sch") ||
+    s.endsWith(".kicad_pro") ||
+    s.endsWith(".kicad_sym") ||
+    s.endsWith(".kicad_mod") ||
+    s.endsWith(".pretty") ||
+    s.endsWith(".pretty/")
+  ) {
     return true;
   }
   // Any path containing a slash is treated as a path; avoids false-positives
@@ -113,12 +140,21 @@ function parseArgs(argv: string[]): ParsedArgs {
   let i = 0;
   let scope: FileType | undefined;
 
-  // Detect leading pcb/sch subcommand (with `schematic` as alias for `sch`)
+  // Detect leading subcommand. Aliases:
+  //   sch ↔ schematic
+  //   sym ↔ symbol
+  //   fp  ↔ footprint
   if (argv[0] === "pcb") {
     scope = "pcb";
     i = 1;
   } else if (argv[0] === "sch" || argv[0] === "schematic") {
     scope = "sch";
+    i = 1;
+  } else if (argv[0] === "sym" || argv[0] === "symbol") {
+    scope = "sym";
+    i = 1;
+  } else if (argv[0] === "fp" || argv[0] === "footprint") {
+    scope = "fp";
     i = 1;
   }
 
@@ -128,7 +164,10 @@ function parseArgs(argv: string[]): ParsedArgs {
   let fromRef: string | undefined;
   let toRef: string | undefined;
   let outputDir: string | undefined;
+  let outputHtml: string | undefined;
   let imagesOnly = false;
+  let text = false;
+  let textOnly = false;
   let open: string | undefined;
 
   for (; i < argv.length; i++) {
@@ -148,8 +187,18 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === "--output-dir") {
       if (i + 1 >= argv.length) throw new Error("--output-dir requires a value");
       outputDir = argv[++i];
+    } else if (arg === "--output" || arg === "-o") {
+      if (i + 1 >= argv.length) throw new Error(`${arg} requires a value`);
+      outputHtml = argv[++i];
+    } else if (arg.startsWith("--output=")) {
+      outputHtml = arg.slice("--output=".length);
     } else if (arg === "--images-only") {
       imagesOnly = true;
+    } else if (arg === "--text") {
+      text = true;
+    } else if (arg === "--text-only") {
+      textOnly = true;
+      text = true;
     } else if (arg === "--open" || arg.startsWith("--open=")) {
       let target: string | undefined;
       if (arg.startsWith("--open=")) {
@@ -228,7 +277,10 @@ function parseArgs(argv: string[]): ParsedArgs {
     throw new Error(`bad ref: ${toRef}`);
   }
 
-  // Validate subcommand vs input extension when input is a single file
+  // Validate subcommand vs input extension when input is a single file.
+  // Directory and .kicad_pro inputs skip this check (resolveInputs handles
+  // scope-filtering). For sym/fp the file may also be a .pretty directory,
+  // so we don't enforce strictly here either.
   if (input !== undefined) {
     if (scope === "pcb" && !input.endsWith(".kicad_pcb")) {
       throw new Error(`pcb subcommand requires a .kicad_pcb file, got: ${input}`);
@@ -236,9 +288,15 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (scope === "sch" && !input.endsWith(".kicad_sch")) {
       throw new Error(`sch subcommand requires a .kicad_sch file, got: ${input}`);
     }
+    if (scope === "sym" && !input.endsWith(".kicad_sym")) {
+      throw new Error(`sym subcommand requires a .kicad_sym file, got: ${input}`);
+    }
+    if (scope === "fp" && !input.endsWith(".kicad_mod") && !input.endsWith(".pretty") && !input.endsWith(".pretty/")) {
+      throw new Error(`fp subcommand requires a .kicad_mod file or .pretty directory, got: ${input}`);
+    }
   }
 
-  return { input, fromRef, toRef, outputDir, imagesOnly, scope, open };
+  return { input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly, scope, open };
 }
 
 async function main(): Promise<void> {
@@ -258,9 +316,14 @@ async function main(): Promise<void> {
   }
 
   try {
+    if (parsed.textOnly) {
+      printTextDiff(parsed);
+      return;
+    }
     const project = await renderProject({
       input: parsed.input,
       outputDir: parsed.outputDir,
+      outputHtml: parsed.outputHtml,
       imagesOnly: parsed.imagesOnly,
       fromRef: parsed.fromRef,
       toRef: parsed.toRef,
@@ -270,10 +333,39 @@ async function main(): Promise<void> {
     for (const r of project.results) {
       printSummary(r, !!parsed.imagesOnly);
     }
+    if (parsed.text) {
+      console.log("");
+      printTextDiff(parsed);
+    }
   } catch (e) {
     console.error(`Error: ${(e as Error).message}`);
     process.exit(1);
   }
+}
+
+/** Resolve inputs and emit a structural text diff for each file to stdout.
+ *  Skips file types that the text differ doesn't support (sym/fp). */
+function printTextDiff(parsed: ParsedArgs): void {
+  const files = resolveInputs(parsed.input, parsed.scope)
+    .filter(f => f.endsWith(".kicad_pcb") || f.endsWith(".kicad_sch"));
+  if (files.length === 0) {
+    console.error("Warning: text diff supports only .kicad_pcb / .kicad_sch — nothing to diff");
+    return;
+  }
+  const fromRef = parsed.fromRef ?? "HEAD";
+  const toRef = parsed.toRef ?? "";
+  const repoRoot = repoRootOf(files[0]);
+  for (const f of files) {
+    console.log(textDiff(f, fromRef, toRef, repoRoot));
+  }
+}
+
+function repoRootOf(filePath: string): string | null {
+  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: filePath.replace(/\/[^/]*$/, "") || ".",
+    encoding: "utf8",
+  });
+  return r.status === 0 ? r.stdout.trim() : null;
 }
 
 main();

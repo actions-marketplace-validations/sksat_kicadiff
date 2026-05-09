@@ -12,7 +12,7 @@ import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import which from "which";
 import VIEWER_HTML from "./viewer-content.ts";
-import type { FileType, FileManifest, Manifest, ProjectManifest, SideManifest } from "./types.ts";
+import type { FileType, Manifest, ProjectManifest, SideManifest } from "./types.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -109,24 +109,37 @@ function gitHasFileAtRef(repoRoot: string, ref: string, relPath: string): boolea
   return r.status === 0;
 }
 
-function gitShowToFile(repoRoot: string, ref: string, relPath: string, dest: string): void {
-  // KiCad files can be large (multiple MB) — use a generous buffer (32 MB)
+/** Extract `<ref>:<relPath>` to a temp file beside `nearFile`, preserving the
+ *  extension. Atomic w.r.t. other readers: the file is written in one syscall
+ *  with full content (no empty placeholder window). This matters for .pretty/
+ *  directories where parallel kicad-cli invocations scan all sibling .kicad_mod
+ *  files; an empty placeholder would cause "Unable to load library" errors. */
+function gitShowToTempBeside(
+  repoRoot: string,
+  ref: string,
+  relPath: string,
+  nearFile: string,
+): string {
+  const dir = path.dirname(nearFile);
+  const ext = path.extname(nearFile);
   const out = execFileSync("git", ["-C", repoRoot, "show", `${ref}:${relPath}`], {
     maxBuffer: 32 * 1024 * 1024,
   });
-  fs.writeFileSync(dest, out);
-}
-
-/** Create a temp file in the same directory as `nearFile`, preserving its extension.
- *  Same dir is required so kicad-cli can resolve .kicad_pro / library paths. */
-function makeTempBeside(nearFile: string): string {
-  const dir = path.dirname(nearFile);
-  const ext = path.extname(nearFile); // includes the dot
-  // Random component matches `mktemp -p ... preview_XXXXXX.<ext>` style
-  const rand = Math.random().toString(36).slice(2, 8);
-  const tmp = path.join(dir, `preview_${rand}${ext}`);
-  fs.writeFileSync(tmp, "");
-  return tmp;
+  // Retry on the rare collision (6-char random space is small but non-zero)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const rand = Math.random().toString(36).slice(2, 8);
+    const tmp = path.join(dir, `preview_${rand}${ext}`);
+    try {
+      // O_CREAT|O_EXCL prevents two concurrent calls from picking the same path
+      const fd = fs.openSync(tmp, "wx");
+      fs.writeSync(fd, out);
+      fs.closeSync(fd);
+      return tmp;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+  }
+  throw new Error("failed to create temp file beside " + nearFile);
 }
 
 // =============================================================================
@@ -167,27 +180,168 @@ async function renderPcbLayers(input: string, outputDir: string): Promise<void> 
   await Promise.all(conversions);
 }
 
-async function renderSch(input: string, outputDir: string, outputSvg: string): Promise<void> {
-  fs.mkdirSync(outputDir, { recursive: true });
+/** Render a schematic. For multi-sheet (hierarchical) schematics, kicad-cli
+ *  emits one SVG per sheet: `<basename>.svg` (root) + `<basename>-<sub>.svg`.
+ *
+ *  Output layout:
+ *    <sideDir>/<safe>.png            ← root sheet PNG (compatibility, "combined")
+ *    <sideDir>/sch_pages_<safe>/     ← per-page PNGs, named by sheet
+ *      <rootName>.png
+ *      <subsheet1>.png
+ *      ...
+ *
+ *  Returns the list of pages, sorted with root first. The root entry's `png`
+ *  field points to the side-level `<safe>.png` (same content, two locations
+ *  for backward-compat with the manifest's `combined` field). */
+async function renderSch(
+  input: string,
+  sideDir: string,
+  rootPng: string,
+  pagesDir: string,
+  rootName: string,
+): Promise<{ name: string; png: string }[]> {
+  fs.mkdirSync(sideDir, { recursive: true });
+  fs.mkdirSync(pagesDir, { recursive: true });
+  // Export all sheets to pagesDir so they don't collide with PCB outputs
+  // when both file types render into the same side directory.
   await run("kicad-cli", [
     "sch", "export", "svg",
     "--exclude-drawing-sheet",
     "--no-background-color",
-    "-o", outputDir,
+    "-o", pagesDir,
     input,
   ]);
-  // kicad-cli sch export auto-names output by input file basename
-  const baseName = path.basename(input, ".kicad_sch");
-  const generated = path.join(outputDir, `${baseName}.svg`);
-  if (fs.existsSync(generated) && generated !== outputSvg) {
-    fs.renameSync(generated, outputSvg);
-  }
+
+  // kicad-cli names the root output after the input filename's basename,
+  // not after the project's basename. We pass rootName so before/after sides
+  // (which may use a temp file from `git show`) produce identically-named
+  // pages. The actual input basename used by kicad-cli:
+  const inputBaseName = path.basename(input, ".kicad_sch");
+
+  // Collect all SVGs anchored to inputBaseName (root + `<base>-*.svg` subsheets)
+  const svgFiles = fs.readdirSync(pagesDir)
+    .filter(f => f.endsWith(".svg"))
+    .filter(f => f === `${inputBaseName}.svg` || f.startsWith(`${inputBaseName}-`));
+
+  // Map kicad-cli output names → stable page names. The root page uses the
+  // caller-provided `rootName` (the project basename) so before/after sides
+  // produce identically-named pages even when the before-side rendered from
+  // a temp file with a different basename.
+  const pages: { name: string; svg: string; png: string }[] = svgFiles.map(f => {
+    const stem = f.slice(0, -".svg".length);
+    const name = stem === inputBaseName
+      ? rootName
+      : stem.slice(inputBaseName.length + 1);
+    return {
+      name,
+      svg: path.join(pagesDir, f),
+      png: path.join(pagesDir, `${name}.png`),
+    };
+  });
+  // Sort: root first, then alphabetical
+  pages.sort((a, b) => {
+    if (a.name === rootName) return -1;
+    if (b.name === rootName) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  // Convert SVGs to PNG in parallel. The page name (not the SVG basename) is
+  // used for the PNG so the file structure mirrors the manifest.
+  await Promise.all(pages.map(p =>
+    run("rsvg-convert", ["-w", "1600", p.svg, "-o", p.png]),
+  ));
+
+  // Copy root page PNG to the side-level "combined" location for backward-compat
+  const root = pages.find(p => p.name === rootName);
+  if (root) fs.copyFileSync(root.png, rootPng);
+
+  return pages.map(({ name, png }) => ({ name, png }));
 }
 
 async function svgToPng(svg: string, png: string): Promise<void> {
   if (fs.existsSync(svg)) {
     await run("rsvg-convert", ["-w", "1600", svg, "-o", png]);
   }
+}
+
+/** Render a symbol library file (.kicad_sym). Each contained symbol becomes
+ *  a "page" entry, so the viewer shows a tab strip for selection just like
+ *  a multi-sheet schematic. kicad-cli emits one SVG per symbol unit named
+ *  `<symbol>_unit<N>.svg`; we currently only surface unit 1 to keep the
+ *  page list compact. (Most KiCad symbols have a single unit; multi-unit
+ *  parts like opamps or relays are uncommon and can be added later.) */
+async function renderSymLib(
+  input: string,
+  rootPng: string,
+  pagesDir: string,
+): Promise<{ name: string; png: string }[]> {
+  fs.mkdirSync(pagesDir, { recursive: true });
+  await run("kicad-cli", [
+    "sym", "export", "svg",
+    "-o", pagesDir,
+    input,
+  ]);
+  // Filenames look like "<symbol>_unit1.svg"
+  const svgs = fs.readdirSync(pagesDir)
+    .filter(f => f.endsWith(".svg") && f.endsWith("_unit1.svg"));
+  const pages = svgs.map(f => {
+    const name = f.slice(0, -"_unit1.svg".length);
+    return {
+      name,
+      svg: path.join(pagesDir, f),
+      png: path.join(pagesDir, `${name}.png`),
+    };
+  });
+  pages.sort((a, b) => a.name.localeCompare(b.name));
+  await Promise.all(pages.map(p =>
+    run("rsvg-convert", ["-w", "800", p.svg, "-o", p.png]),
+  ));
+  // For root/combined PNG: use the first symbol if any
+  if (pages.length > 0) fs.copyFileSync(pages[0].png, rootPng);
+  return pages.map(({ name, png }) => ({ name, png }));
+}
+
+/** Render a single footprint file (.kicad_mod). kicad-cli scans the entire
+ *  containing directory looking for footprints by name, which causes problems
+ *  when (a) multiple parallel renders place temp .kicad_mod files in the same
+ *  .pretty/ directory, and (b) those temp files contain the same internal
+ *  footprint name as the original. Both pollute the library and cause
+ *  "Unable to load library" errors.
+ *
+ *  Workaround: always render against an isolated single-file lib directory.
+ *  We copy `input` into a `<pagesDir>/lib.pretty/<name>.kicad_mod` and point
+ *  kicad-cli there. This costs one file copy but eliminates the race. */
+async function renderFootprint(
+  input: string,
+  rootPng: string,
+  pagesDir: string,
+  stableName: string,
+): Promise<{ name: string; png: string }[]> {
+  fs.mkdirSync(pagesDir, { recursive: true });
+  const isolatedLib = path.join(pagesDir, "lib.pretty");
+  fs.mkdirSync(isolatedLib, { recursive: true });
+  // Copy input into isolated lib using stableName as the filename. kicad-cli
+  // identifies footprints by FILENAME within the .pretty library (not by the
+  // internal `(footprint NAME ...)` / `(module NAME ...)` header), so the
+  // copied filename here is what we pass to --footprint.
+  const isolatedFile = path.join(isolatedLib, `${stableName}.kicad_mod`);
+  fs.copyFileSync(input, isolatedFile);
+
+  await run("kicad-cli", [
+    "fp", "export", "svg",
+    "--footprint", stableName,
+    "-o", pagesDir,
+    isolatedLib,
+  ]);
+  // kicad-cli emits `<stableName>.svg` since that's the lib filename
+  const stableSvg = path.join(pagesDir, `${stableName}.svg`);
+  const stablePng = path.join(pagesDir, `${stableName}.png`);
+  await run("rsvg-convert", ["-w", "1200", stableSvg, "-o", stablePng]);
+  fs.copyFileSync(stablePng, rootPng);
+
+  // Clean up isolated lib (small, but accumulates over many renders)
+  fs.rmSync(isolatedLib, { recursive: true, force: true });
+  return [{ name: stableName, png: stablePng }];
 }
 
 // =============================================================================
@@ -208,6 +362,41 @@ function buildLayerMap(layersDir: string, side: "before" | "after", safe: string
   return map;
 }
 
+/** Scan the schematic per-page directory and return a sorted page list.
+ *  The root sheet (matching the schematic basename) is always first; that
+ *  basename is recovered by finding the PNG whose name matches the project. */
+function buildSchPages(
+  pagesDir: string,
+  side: "before" | "after",
+  safe: string,
+  rootName: string,
+): { name: string; png: string }[] {
+  if (!fs.existsSync(pagesDir)) return [];
+  const pngs = fs.readdirSync(pagesDir).filter(f => f.endsWith(".png"));
+  const pages = pngs.map(f => ({
+    name: f.slice(0, -".png".length),
+    png: `${side}/sch_pages_${safe}/${f}`,
+  }));
+  pages.sort((a, b) => {
+    if (a.name === rootName) return -1;
+    if (b.name === rootName) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  return pages;
+}
+
+/** Scan an items directory (sym/fp) and return entries as pages.
+ *  Used for symbol libraries and footprint files where each contained
+ *  symbol/footprint becomes a selectable page in the viewer. */
+function buildItemPages(itemsDir: string, side: "before" | "after", safe: string): { name: string; png: string }[] {
+  if (!fs.existsSync(itemsDir)) return [];
+  const pngs = fs.readdirSync(itemsDir).filter(f => f.endsWith(".png")).sort();
+  return pngs.map(f => ({
+    name: f.slice(0, -".png".length),
+    png: `${side}/items_${safe}/${f}`,
+  }));
+}
+
 function buildManifest(args: {
   relPath: string;
   fileType: FileType;
@@ -215,22 +404,27 @@ function buildManifest(args: {
   safe: string;
   hasBefore: boolean;
   diffPng?: string;
+  schRootName?: string;
 }): Manifest {
-  const { relPath, fileType, outputDir, safe, hasBefore, diffPng } = args;
-  const after: SideManifest = {
-    combined: `after/${safe}.png`,
-    layers: buildLayerMap(path.join(outputDir, `after/layers_${safe}`), "after", safe),
-  };
-  const m: Manifest = { file: relPath, type: fileType, hasBefore, after };
-  if (hasBefore) {
-    m.before = {
-      combined: `before/${safe}.png`,
-      layers: buildLayerMap(path.join(outputDir, `before/layers_${safe}`), "before", safe),
-    };
+  const { relPath, fileType, outputDir, safe, hasBefore, diffPng, schRootName } = args;
+
+  function buildSide(side: "before" | "after"): SideManifest {
+    const out: SideManifest = { combined: `${side}/${safe}.png` };
+    if (fileType === "pcb") {
+      out.layers = buildLayerMap(path.join(outputDir, `${side}/layers_${safe}`), side, safe);
+    } else if (fileType === "sch" && schRootName) {
+      const pages = buildSchPages(path.join(outputDir, `${side}/sch_pages_${safe}`), side, safe, schRootName);
+      if (pages.length > 0) out.pages = pages;
+    } else if (fileType === "sym" || fileType === "fp") {
+      const pages = buildItemPages(path.join(outputDir, `${side}/items_${safe}`), side, safe);
+      if (pages.length > 0) out.pages = pages;
+    }
+    return out;
   }
-  if (diffPng && fs.existsSync(diffPng)) {
-    m.diff = `diff/${safe}.png`;
-  }
+
+  const m: Manifest = { file: relPath, type: fileType, hasBefore, after: buildSide("after") };
+  if (hasBefore) m.before = buildSide("before");
+  if (diffPng && fs.existsSync(diffPng)) m.diff = `diff/${safe}.png`;
   return m;
 }
 
@@ -264,6 +458,8 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
   let fileType: FileType;
   if (filePath.endsWith(".kicad_pcb")) fileType = "pcb";
   else if (filePath.endsWith(".kicad_sch")) fileType = "sch";
+  else if (filePath.endsWith(".kicad_sym")) fileType = "sym";
+  else if (filePath.endsWith(".kicad_mod")) fileType = "fp";
   else throw new Error(`not a KiCad file: ${filePath}`);
 
   // --- Determine repo root and relative path ---
@@ -305,6 +501,15 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
   ): Promise<boolean> {
     const layersDir = path.join(outputDir, `${side}/layers_${safe}`);
 
+    const sideDir = path.join(outputDir, side);
+    const schPagesDir = path.join(sideDir, `sch_pages_${safe}`);
+    const itemPagesDir = path.join(sideDir, `items_${safe}`);
+    // Use the original schematic basename for stable page names across sides
+    // (before-side may render from a temp file with a different basename).
+    const schRootName = fileType === "sch"
+      ? path.basename(filePath, ".kicad_sch")
+      : "";
+
     async function renderFromSource(src: string): Promise<void> {
       if (fileType === "pcb") {
         // Combined and layered exports are independent → run in parallel
@@ -312,10 +517,18 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
           renderPcbCombined(src, targetSvg),
           renderPcbLayers(src, layersDir),
         ]);
-      } else {
-        await renderSch(src, path.join(outputDir, side), targetSvg);
+        await svgToPng(targetSvg, targetPng);
+      } else if (fileType === "sch") {
+        // renderSch produces rootPng directly (and per-page PNGs in schPagesDir)
+        await renderSch(src, sideDir, targetPng, schPagesDir, schRootName);
+      } else if (fileType === "sym") {
+        await renderSymLib(src, targetPng, itemPagesDir);
+      } else if (fileType === "fp") {
+        // Stable name = original file's basename (so before/after sides
+        // produce identically-named pages even when before renders from a
+        // temp file with a different basename).
+        await renderFootprint(src, targetPng, itemPagesDir, path.basename(filePath, ".kicad_mod"));
       }
-      await svgToPng(targetSvg, targetPng);
     }
 
     if (isWorkingTree(ref)) {
@@ -323,14 +536,12 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
       return fs.existsSync(targetPng);
     }
     if (!repoRoot || !gitHasFileAtRef(repoRoot, ref, relPath)) return false;
-    let tempFile: string | null = null;
+    const tempFile = gitShowToTempBeside(repoRoot, ref, relPath, filePath);
     try {
-      tempFile = makeTempBeside(filePath);
-      gitShowToFile(repoRoot, ref, relPath, tempFile);
       await renderFromSource(tempFile);
       return fs.existsSync(targetPng);
     } finally {
-      if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     }
   }
 
@@ -358,8 +569,13 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     if (!fs.existsSync(diffPng)) diffPng = undefined;
   }
 
+  // For schematics, pass the project basename so buildManifest can identify
+  // the root sheet (always sorted first in the page list).
+  const schRootName = fileType === "sch"
+    ? path.basename(filePath, ".kicad_sch")
+    : undefined;
   const manifest = buildManifest({
-    relPath, fileType, outputDir, safe, hasBefore, diffPng,
+    relPath, fileType, outputDir, safe, hasBefore, diffPng, schRootName,
   });
 
   const result: RenderResult = {
@@ -438,6 +654,10 @@ export interface ProjectRenderOptions {
    *  matching sibling of the other type is also included if it exists. */
   input?: string;
   outputDir?: string;
+  /** Explicit HTML output path. When set, images live under outputDir but the
+   *  combined HTML is written to this path; manifest image paths are
+   *  rewritten to be relative to the HTML's parent directory. */
+  outputHtml?: string;
   fromRef?: string;
   toRef?: string;
   imagesOnly?: boolean;
@@ -471,41 +691,90 @@ export function resolveInputs(
   const stat = fs.statSync(abs);
   let pcb: string | undefined;
   let sch: string | undefined;
+  const syms: string[] = [];
+  const fps: string[] = [];
+
+  /** Auto-pick sibling sym/fp files in a project directory. We restrict to
+   *  files whose basename matches the project name to avoid pulling in large
+   *  shared libraries. .pretty/ directories follow the same rule.
+   *  All sym/fp picks are no-ops when scope is "pcb" or "sch". */
+  function scanProjectSiblings(dir: string, base: string): void {
+    if (scope !== undefined && scope !== "sym" && scope !== "fp") return;
+    const symCandidate = path.join(dir, `${base}.kicad_sym`);
+    const prettyCandidate = path.join(dir, `${base}.pretty`);
+    if (fs.existsSync(symCandidate)) syms.push(symCandidate);
+    if (fs.existsSync(prettyCandidate) && fs.statSync(prettyCandidate).isDirectory()) {
+      for (const f of fs.readdirSync(prettyCandidate).sort()) {
+        if (f.endsWith(".kicad_mod")) fps.push(path.join(prettyCandidate, f));
+      }
+    }
+  }
 
   if (stat.isDirectory()) {
-    // Pick the first .kicad_pcb / .kicad_sch in the directory
-    for (const f of fs.readdirSync(abs).sort()) {
-      const fp = path.join(abs, f);
-      if (!pcb && f.endsWith(".kicad_pcb")) pcb = fp;
-      if (!sch && f.endsWith(".kicad_sch")) sch = fp;
+    if (abs.endsWith(".pretty")) {
+      // .pretty directory: each .kicad_mod inside is a footprint.
+      // Defensive filter: skip any leftover `preview_*.kicad_mod` temp files
+      // that previous crashed runs may have left behind in the library.
+      for (const f of fs.readdirSync(abs).sort()) {
+        if (f.endsWith(".kicad_mod") && !f.startsWith("preview_")) {
+          fps.push(path.join(abs, f));
+        }
+      }
+    } else {
+      // Project directory — pick first matching pcb/sch and any sibling sym/pretty
+      let projBase: string | undefined;
+      for (const f of fs.readdirSync(abs).sort()) {
+        const fp = path.join(abs, f);
+        if (!pcb && f.endsWith(".kicad_pcb")) {
+          pcb = fp;
+          projBase = f.slice(0, -".kicad_pcb".length);
+        }
+        if (!sch && f.endsWith(".kicad_sch")) {
+          sch = fp;
+          if (!projBase) projBase = f.slice(0, -".kicad_sch".length);
+        }
+      }
+      if (projBase) scanProjectSiblings(abs, projBase);
     }
   } else if (abs.endsWith(".kicad_pro")) {
-    // Find siblings with the same basename
     const dir = path.dirname(abs);
     const base = path.basename(abs, ".kicad_pro");
     const pcbCandidate = path.join(dir, `${base}.kicad_pcb`);
     const schCandidate = path.join(dir, `${base}.kicad_sch`);
     if (fs.existsSync(pcbCandidate)) pcb = pcbCandidate;
     if (fs.existsSync(schCandidate)) sch = schCandidate;
+    scanProjectSiblings(dir, base);
   } else if (abs.endsWith(".kicad_pcb")) {
     pcb = abs;
+    const base = path.basename(abs, ".kicad_pcb");
     const schCandidate = abs.slice(0, -".kicad_pcb".length) + ".kicad_sch";
     if (scope === undefined && fs.existsSync(schCandidate)) sch = schCandidate;
+    if (scope === undefined) scanProjectSiblings(path.dirname(abs), base);
   } else if (abs.endsWith(".kicad_sch")) {
     sch = abs;
+    const base = path.basename(abs, ".kicad_sch");
     const pcbCandidate = abs.slice(0, -".kicad_sch".length) + ".kicad_pcb";
     if (scope === undefined && fs.existsSync(pcbCandidate)) pcb = pcbCandidate;
+    if (scope === undefined) scanProjectSiblings(path.dirname(abs), base);
+  } else if (abs.endsWith(".kicad_sym")) {
+    syms.push(abs);
+  } else if (abs.endsWith(".kicad_mod")) {
+    fps.push(abs);
   } else {
-    throw new Error(`unsupported input: ${abs} (expected dir, .kicad_pro, .kicad_pcb, or .kicad_sch)`);
+    throw new Error(`unsupported input: ${abs} (expected dir, .kicad_pro, .kicad_pcb, .kicad_sch, .kicad_sym, .kicad_mod, or .pretty)`);
   }
 
   // Apply scope filter (subcommand)
-  if (scope === "pcb") sch = undefined;
-  if (scope === "sch") pcb = undefined;
+  if (scope === "pcb") { sch = undefined; syms.length = 0; fps.length = 0; }
+  if (scope === "sch") { pcb = undefined; syms.length = 0; fps.length = 0; }
+  if (scope === "sym") { pcb = undefined; sch = undefined; fps.length = 0; }
+  if (scope === "fp") { pcb = undefined; sch = undefined; syms.length = 0; }
 
   const result: string[] = [];
-  if (pcb) result.push(pcb);
   if (sch) result.push(sch);
+  if (pcb) result.push(pcb);
+  result.push(...syms);
+  result.push(...fps);
   if (result.length === 0) {
     throw new Error(`no KiCad files found under: ${abs}`);
   }
@@ -535,11 +804,22 @@ export async function renderProject(opts: ProjectRenderOptions): Promise<Project
     return { results };
   }
 
-  // Build a combined manifest and HTML in the shared output directory
+  // Build a combined manifest. Image paths in each FileManifest are relative
+  // to outDir (the shared image directory). When --output points at an HTML
+  // outside outDir, paths must be rewritten to be relative to the HTML's
+  // parent directory so the browser can resolve them.
   const outDir = results[0].outputDir;
-  const manifest: ProjectManifest = { files: results.map(r => r.manifest) };
   const safeName = projectSafeName(files);
-  const combinedHtml = path.join(outDir, `${safeName}_diff.html`);
+  const combinedHtml = opts.outputHtml
+    ? path.resolve(opts.outputHtml)
+    : path.join(outDir, `${safeName}_diff.html`);
+
+  // Ensure the parent directory of the HTML exists
+  fs.mkdirSync(path.dirname(combinedHtml), { recursive: true });
+
+  const htmlDir = path.dirname(combinedHtml);
+  const fileManifests = results.map(r => rewriteManifestPaths(r.manifest, outDir, htmlDir));
+  const manifest: ProjectManifest = { files: fileManifests };
   fs.writeFileSync(combinedHtml, buildHtmlFromProject(manifest));
 
   // Auto-open if requested
@@ -553,17 +833,57 @@ export async function renderProject(opts: ProjectRenderOptions): Promise<Project
   return { results, combinedHtml };
 }
 
-/** Derive a stable filename for the combined HTML based on the input files. */
+/** Rewrite all image paths in a FileManifest from `<outDir>/<rel>` to a path
+ *  relative to `htmlDir`. When htmlDir === outDir, paths are unchanged. */
+function rewriteManifestPaths(m: Manifest, outDir: string, htmlDir: string): Manifest {
+  if (path.resolve(outDir) === path.resolve(htmlDir)) return m;
+  const rewrite = (p: string): string => path.relative(htmlDir, path.join(outDir, p));
+  const rewriteSide = (s: SideManifest): SideManifest => {
+    const out: SideManifest = { combined: rewrite(s.combined) };
+    if (s.layers) {
+      out.layers = {};
+      for (const [k, v] of Object.entries(s.layers)) out.layers[k] = rewrite(v);
+    }
+    if (s.pages) {
+      out.pages = s.pages.map(p => ({ name: p.name, png: rewrite(p.png) }));
+    }
+    return out;
+  };
+  const out: Manifest = {
+    file: m.file,
+    type: m.type,
+    hasBefore: m.hasBefore,
+    after: rewriteSide(m.after),
+  };
+  if (m.before) out.before = rewriteSide(m.before);
+  if (m.diff) out.diff = rewrite(m.diff);
+  return out;
+}
+
+/** Derive a stable filename for the combined HTML based on the input files.
+ *  Strategy:
+ *    1. If all files share a basename (typical PCB+sch project): use it.
+ *    2. Else if all files share a parent directory: use its name (handles
+ *       .pretty libraries with many footprints).
+ *    3. Else: concatenate basenames, capped at ~80 chars. */
 function projectSafeName(files: string[]): string {
-  // Use the common basename if all files share one (typical for KiCad projects)
-  const bases = files.map(f => {
-    const name = path.basename(f);
-    return name.replace(/\.kicad_(pcb|sch)$/, "");
-  });
+  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const stripExt = (s: string) =>
+    s.replace(/\.kicad_(pcb|sch|sym|mod)$/, "");
+
+  const bases = files.map(f => stripExt(path.basename(f)));
   const allSame = bases.every(b => b === bases[0]);
-  if (allSame) return bases[0].replace(/[^a-zA-Z0-9._-]/g, "_");
-  // Otherwise concatenate
-  return bases.map(b => b.replace(/[^a-zA-Z0-9._-]/g, "_")).join("__");
+  if (allSame) return sanitize(bases[0]);
+
+  // Files differ — fall back to the common parent directory name. This avoids
+  // ENAMETOOLONG when a .pretty/ library yields dozens of file basenames.
+  const parents = files.map(f => path.basename(path.dirname(f)));
+  const sameParent = parents.every(p => p === parents[0]);
+  if (sameParent && parents[0]) return sanitize(parents[0]);
+
+  // Last resort: join bases, but cap so we don't blow past filename limits.
+  const joined = bases.map(sanitize).join("__");
+  return joined.length > 80 ? joined.slice(0, 80) : joined;
 }
 
 function buildHtmlFromProject(manifest: ProjectManifest): string {

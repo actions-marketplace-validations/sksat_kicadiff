@@ -27,6 +27,14 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
 .layer-extras label{display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap}
 .lbl-before{color:#f48771}.lbl-after{color:#89d185}
 
+/* --- Page selector (multi-sheet schematic) ---
+   Horizontal scrollable tab strip below the file tabs. Shown only for
+   hierarchical schematics where there is more than one sheet. */
+.page-tabs{display:flex;background:#252526;border-bottom:1px solid #3c3c3c;flex-shrink:0;padding:0 8px;overflow-x:auto;gap:2px}
+.page-tabs button{padding:4px 10px;background:transparent;border:none;color:#999;cursor:pointer;font-size:12px;border-bottom:2px solid transparent;white-space:nowrap}
+.page-tabs button:hover{color:#ccc;background:#2a2d2e}
+.page-tabs button.active{color:#fff;border-bottom-color:#007acc}
+
 .main{flex:1;overflow:hidden;position:relative}
 
 /* --- Views --- */
@@ -124,6 +132,7 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
   <h1 id="title"></h1>
   <div class="tabs" id="view-tabs"></div>
 </header>
+<div class="page-tabs" id="page-tabs" style="display:none"></div>
 <div class="layer-panel" id="layer-panel" style="display:none">
   <div class="layer-list" id="layer-list"></div>
   <div class="layer-extras" id="layer-extras"></div>
@@ -140,24 +149,31 @@ if (!window.MANIFEST) {
   throw new Error('missing MANIFEST');
 }
 const PROJECT = window.MANIFEST;
-/* Display order: schematic on the left (default), then PCB. Users typically
- *  start with the schematic when reviewing changes. */
+/* Display order: schematic first, then PCB, then symbol libraries, then
+ *  footprint libraries. Users typically start with the schematic when
+ *  reviewing changes. */
 const FILE_DISPLAY_ORDER = (() => {
   const idx = PROJECT.files.map((_, i) => i);
-  idx.sort((a, b) => {
-    const score = (i) => PROJECT.files[i].type === 'sch' ? 0 : 1;
-    return score(a) - score(b);
-  });
+  const score = (i) => {
+    const t = PROJECT.files[i].type;
+    if (t === 'sch') return 0;
+    if (t === 'pcb') return 1;
+    if (t === 'sym') return 2;
+    return 3; // fp
+  };
+  idx.sort((a, b) => score(a) - score(b));
   return idx;
 })();
-/* Read initial selection from URL hash (e.g. #file=sch). Falls back to the
- *  first file in display order. */
+/* Read initial selection from URL hash (e.g. #file=sch, #file=sym0).
+ *  Falls back to the first file in display order. */
 function fileIdxFromUrl() {
   const m = location.hash.match(/file=([^&]+)/);
   if (!m) return FILE_DISPLAY_ORDER[0];
   const wanted = decodeURIComponent(m[1]);
-  const idx = PROJECT.files.findIndex(f => f.type === wanted);
-  return idx >= 0 ? idx : FILE_DISPLAY_ORDER[0];
+  for (let i = 0; i < PROJECT.files.length; i++) {
+    if (fileHashKey(PROJECT.files[i], i) === wanted) return i;
+  }
+  return FILE_DISPLAY_ORDER[0];
 }
 let currentFileIdx = fileIdxFromUrl();
 let M = PROJECT.files[currentFileIdx];
@@ -170,6 +186,7 @@ let layerVisible = {};  // layer name -> bool (eye icon toggle)
 let activeLayer = null; // selected layer name (gets z-index boost to top)
 let showDiff = true;  // default ON — diffs are the primary use case
 let swipePct = 50;      // swipe divider position in percent
+let currentPage = 0;    // multi-sheet schematic page index (0 = root)
 
 /* Base z-order: bottom to top. The active layer is boosted above all others
    but keeps the same opacity — matching KiCad's behavior where the active
@@ -196,6 +213,7 @@ function rebuildForCurrentFile() {
   showDiff = true;
   swipePct = 50;
   currentView = 'sbs';
+  currentPage = 0;
 
   $('#title').textContent = M.file;
   document.title = 'KiCad Diff: ' + M.file;
@@ -208,14 +226,66 @@ function rebuildForCurrentFile() {
   $('#layer-extras').innerHTML = '';
   $('#layer-panel').style.display = 'none';
   $('#layer-list').style.display = '';
+  $('#page-tabs').innerHTML = '';
+  $('#page-tabs').style.display = 'none';
   $('#main').innerHTML = '';
 
+  buildPageTabs();
   buildTabs();
   buildLayerPanel();
   buildViews();
   setView('sbs');
   // applyDiff after buildViews creates the diff overlay images
   applyDiff();
+}
+
+/** Build a horizontal tab strip for selectable pages within a file.
+ *  Used for: multi-sheet schematics, symbol libraries (each symbol),
+ *  and footprint libraries (each footprint). Shown only when
+ *  M.after.pages exists and has more than one entry. Page index 0 is
+ *  the default (root sheet for sch, first symbol/footprint for sym/fp). */
+function buildPageTabs() {
+  const pages = (M.after && M.after.pages) || [];
+  const supports = (M.type === 'sch' || M.type === 'sym' || M.type === 'fp');
+  if (!supports || pages.length <= 1) return;
+  const bar = $('#page-tabs');
+  bar.style.display = 'flex';
+  pages.forEach((p, idx) => {
+    const btn = document.createElement('button');
+    btn.textContent = p.name;
+    btn.dataset.pageIdx = String(idx);
+    if (idx === currentPage) btn.classList.add('active');
+    btn.onclick = () => {
+      if (idx === currentPage) return;
+      currentPage = idx;
+      $$('#page-tabs button').forEach(b => b.classList.toggle('active', Number(b.dataset.pageIdx) === idx));
+      // Re-render only the views (page selection doesn't affect tabs/layers)
+      $('#main').innerHTML = '';
+      buildViews();
+      setView(currentView);
+      applyDiff();
+    };
+    bar.appendChild(btn);
+  });
+}
+
+/** Build a label for a file tab. Schematic and PCB get their type names;
+ *  sym/fp use the file's basename so multiple libraries are distinguishable. */
+function fileTabLabel(f) {
+  if (f.type === 'pcb') return 'PCB';
+  if (f.type === 'sch') return 'Schematic';
+  // For sym/fp, derive a short name from the file path
+  const base = (f.file || '').split('/').pop() || f.file || '';
+  const stem = base.replace(/\.kicad_(sym|mod)$/, '').replace(/\.pretty$/, '');
+  return f.type === 'sym' ? `Sym: ${stem}` : `FP: ${stem}`;
+}
+
+/** Build a hash key for a file tab. The URL hash uses a unique key per file
+ *  so multiple sym/fp libraries can each be addressed. */
+function fileHashKey(f, idx) {
+  if (f.type === 'pcb' || f.type === 'sch') return f.type;
+  // For sym/fp, append the index so multiple libraries each get a stable key
+  return `${f.type}${idx}`;
 }
 
 /** Top-level file tabs shown only when 2+ files are present.
@@ -227,14 +297,14 @@ function buildFileTabs() {
   for (const idx of FILE_DISPLAY_ORDER) {
     const f = PROJECT.files[idx];
     const btn = document.createElement('button');
-    btn.textContent = f.type === 'pcb' ? 'PCB' : 'Schematic';
+    btn.textContent = fileTabLabel(f);
     btn.dataset.fileIdx = String(idx);
     if (idx === currentFileIdx) btn.classList.add('active');
     btn.onclick = () => {
       if (idx === currentFileIdx) return;
       currentFileIdx = idx;
       // Persist selection in URL hash so reload / navigation preserves state
-      history.replaceState(null, '', `#file=${PROJECT.files[idx].type}`);
+      history.replaceState(null, '', `#file=${fileHashKey(PROJECT.files[idx], idx)}`);
       $$('#file-tabs button').forEach(b => b.classList.toggle('active', Number(b.dataset.fileIdx) === idx));
       rebuildForCurrentFile();
     };
@@ -465,14 +535,19 @@ function makeLayerStack(side, id) {
       stack.appendChild(img);
     });
   } else {
+    // For multi-sheet schematics, prefer the current page's PNG. Falls back
+    // to `combined` for PCB and single-sheet sch (no `pages` field).
     const img = document.createElement('img');
-    img.src = data.combined;
+    const pageSrc = (data.pages && data.pages[currentPage] && data.pages[currentPage].png) || data.combined;
+    img.src = pageSrc;
     img.onerror = () => { img.style.display = 'none'; };
     stack.appendChild(img);
   }
 
-  // Diff highlight overlay (ImageMagick compare output)
-  if (M.diff && side === 'after') {
+  // Diff highlight overlay (ImageMagick compare output).
+  // Only shown on the root page (currentPage === 0) — diff is computed on
+  // the combined PNG which is the root sheet for schematics.
+  if (M.diff && side === 'after' && currentPage === 0) {
     const diffImg = document.createElement('img');
     diffImg.src = M.diff;
     diffImg.className = 'layer diff-overlay';
