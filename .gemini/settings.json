@@ -5,12 +5,6 @@
       "args": [
         "kicad-mcp-pro"
       ]
-    },
-    "gemini": {
-      "command": "uvx",
-      "args": [
-        "kicad-mcp-pro"
-      ]
     }
   }
 }
