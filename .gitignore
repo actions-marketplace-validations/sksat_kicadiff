@@ -3,3 +3,12 @@ test/fixtures/
 test-results/
 dist/
 src/viewer-content.ts
+
+# KiCad runtime artifacts (per-user state, lock files, autosave/backup
+# directories — all regenerated as KiCad opens / works on the project).
+*.kicad_prl
+*.lck
+~*.lck
+*-backups/
+.history/
+~_autosave-*

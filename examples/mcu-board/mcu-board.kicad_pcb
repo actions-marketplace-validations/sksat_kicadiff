@@ -1,0 +1,1213 @@
+(kicad_pcb
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(general
+		(thickness 1.6)
+		(legacy_teardrops no)
+	)
+	(paper "A4")
+	(layers
+		(0 "F.Cu" signal)
+		(2 "B.Cu" signal)
+		(5 "F.SilkS" user "F.Silkscreen")
+		(7 "B.SilkS" user "B.Silkscreen")
+		(1 "F.Mask" user)
+		(3 "B.Mask" user)
+		(25 "Edge.Cuts" user)
+		(27 "Margin" user)
+		(31 "F.CrtYd" user "F.Courtyard")
+		(29 "B.CrtYd" user "B.Courtyard")
+	)
+	(setup
+		(pad_to_mask_clearance 0)
+		(allow_soldermask_bridges_in_footprints no)
+		(tenting
+			(front yes)
+			(back yes)
+		)
+		(covering
+			(front no)
+			(back no)
+		)
+		(plugging
+			(front no)
+			(back no)
+		)
+		(capping no)
+		(filling no)
+		(pcbplotparams
+			(layerselection 0x00000000_00000000_55555555_5755f5ff)
+			(plot_on_all_layers_selection 0x00000000_00000000_00000000_00000000)
+			(disableapertmacros no)
+			(usegerberextensions no)
+			(usegerberattributes yes)
+			(usegerberadvancedattributes yes)
+			(creategerberjobfile yes)
+			(dashed_line_dash_ratio 12)
+			(dashed_line_gap_ratio 3)
+			(svgprecision 4)
+			(plotframeref no)
+			(mode 1)
+			(useauxorigin no)
+			(pdf_front_fp_property_popups yes)
+			(pdf_back_fp_property_popups yes)
+			(pdf_metadata yes)
+			(pdf_single_document no)
+			(dxfpolygonmode yes)
+			(dxfimperialunits yes)
+			(dxfusepcbnewfont yes)
+			(psnegative no)
+			(psa4output no)
+			(plot_black_and_white yes)
+			(sketchpadsonfab no)
+			(plotpadnumbers no)
+			(hidednponfab no)
+			(sketchdnponfab yes)
+			(crossoutdnponfab yes)
+			(subtractmaskfromsilk no)
+			(outputformat 1)
+			(mirror no)
+			(drillshape 1)
+			(scaleselection 1)
+			(outputdirectory "")
+		)
+	)
+	(footprint "Connector_PinHeader_2.54mm:PinHeader_1x02"
+		(layer "F.Cu")
+		(uuid "aa000001-0000-0000-0000-000000000001")
+		(at 102 110)
+		(property "Reference" "J1"
+			(at -3 0 0)
+			(layer "F.SilkS")
+			(uuid "aa000001-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+				(justify right)
+			)
+		)
+		(property "Value" "5V_IN"
+			(at 3 0 0)
+			(layer "F.SilkS")
+			(uuid "aa000001-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+				(justify left)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" thru_hole rect
+			(at 0 0)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "VIN")
+			(uuid "aa000001-0001-1111-1111-000000000001")
+		)
+		(pad "2" thru_hole oval
+			(at 0 2.54)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "GND")
+			(uuid "aa000001-0002-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Resistor_SMD:C_0805_2012Metric"
+		(layer "F.Cu")
+		(uuid "aa000002-0000-0000-0000-000000000001")
+		(at 108 110)
+		(property "Reference" "C1"
+			(at 0 -2 0)
+			(layer "F.SilkS")
+			(uuid "aa000002-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "10uF"
+			(at 0 2 0)
+			(layer "F.SilkS")
+			(uuid "aa000002-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "VIN")
+			(uuid "aa000002-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000002-2222-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
+		(layer "F.Cu")
+		(uuid "aa000003-0000-0000-0000-000000000001")
+		(at 115 110)
+		(property "Reference" "U2"
+			(at 0 -5 0)
+			(layer "F.SilkS")
+			(uuid "aa000003-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "AMS1117-3.3"
+			(at 0 5 0)
+			(layer "F.SilkS")
+			(uuid "aa000003-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -2.3 -3.1)
+			(size 1.5 2)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000003-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 0 -3.1)
+			(size 1.5 2)
+			(layers "F.Cu" "F.Mask")
+			(net "VIN")
+			(uuid "aa000003-2222-1111-1111-000000000001")
+		)
+		(pad "3" smd rect
+			(at 2.3 -3.1)
+			(size 1.5 2)
+			(layers "F.Cu" "F.Mask")
+			(net "+3V3")
+			(uuid "aa000003-3333-1111-1111-000000000001")
+		)
+		(pad "4" smd rect
+			(at 0 3.1)
+			(size 3.6 2.2)
+			(layers "F.Cu" "F.Mask")
+			(net "VIN")
+			(uuid "aa000003-4444-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Resistor_SMD:C_0805_2012Metric"
+		(layer "F.Cu")
+		(uuid "aa000004-0000-0000-0000-000000000001")
+		(at 121 110)
+		(property "Reference" "C2"
+			(at 0 -2 0)
+			(layer "F.SilkS")
+			(uuid "aa000004-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "10uF"
+			(at 0 2 0)
+			(layer "F.SilkS")
+			(uuid "aa000004-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "+3V3")
+			(uuid "aa000004-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000004-2222-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Resistor_SMD:C_0805_2012Metric"
+		(layer "F.Cu")
+		(uuid "aa000005-0000-0000-0000-000000000001")
+		(at 130 102)
+		(property "Reference" "C3"
+			(at 0 -2 0)
+			(layer "F.SilkS")
+			(uuid "aa000005-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "100nF"
+			(at 0 2 0)
+			(layer "F.SilkS")
+			(uuid "aa000005-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "+3V3")
+			(uuid "aa000005-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000005-2222-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
+		(layer "F.Cu")
+		(uuid "aa000006-0000-0000-0000-000000000001")
+		(at 130 110)
+		(property "Reference" "U1"
+			(at 0 -3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa000006-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "MCU"
+			(at 0 3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa000006-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -2.7 -1.905)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "RST")
+			(uuid "aa000006-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at -2.7 -0.635)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "PA1")
+			(uuid "aa000006-2222-1111-1111-000000000001")
+		)
+		(pad "3" smd rect
+			(at -2.7 0.635)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "PA2")
+			(uuid "aa000006-3333-1111-1111-000000000001")
+		)
+		(pad "4" smd rect
+			(at -2.7 1.905)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000006-4444-1111-1111-000000000001")
+		)
+		(pad "5" smd rect
+			(at 2.7 1.905)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "+3V3")
+			(uuid "aa000006-5555-1111-1111-000000000001")
+		)
+		(pad "6" smd rect
+			(at 2.7 0.635)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "PA3")
+			(uuid "aa000006-6666-1111-1111-000000000001")
+		)
+		(pad "7" smd rect
+			(at 2.7 -0.635)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "LED_A")
+			(uuid "aa000006-7777-1111-1111-000000000001")
+		)
+		(pad "8" smd rect
+			(at 2.7 -1.905)
+			(size 1.55 0.6)
+			(layers "F.Cu" "F.Mask")
+			(net "PA5")
+			(uuid "aa000006-8888-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Button_Switch_SMD:SW_SPST_TL3342"
+		(layer "F.Cu")
+		(uuid "aa000007-0000-0000-0000-000000000001")
+		(at 138 102)
+		(property "Reference" "SW1"
+			(at 0 -5 0)
+			(layer "F.SilkS")
+			(uuid "aa000007-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "Reset"
+			(at 0 5 0)
+			(layer "F.SilkS")
+			(uuid "aa000007-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f81be06f-f81b-406f-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -2.5 -3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "RST")
+			(uuid "aa000007-1111-1111-1111-000000000001")
+		)
+		(pad "1" smd rect
+			(at 2.5 -3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "RST")
+			(uuid "aa000007-2222-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at -2.5 3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000007-3333-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 2.5 3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000007-4444-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Resistor_SMD:R_0805_2012Metric"
+		(layer "F.Cu")
+		(uuid "aa000008-0000-0000-0000-000000000001")
+		(at 138 117)
+		(property "Reference" "R1"
+			(at 0 -2 0)
+			(layer "F.SilkS")
+			(uuid "aa000008-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "10k"
+			(at 0 2 0)
+			(layer "F.SilkS")
+			(uuid "aa000008-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "+3V3")
+			(uuid "aa000008-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "RST")
+			(uuid "aa000008-2222-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Resistor_SMD:R_0805_2012Metric"
+		(layer "F.Cu")
+		(uuid "aa000009-0000-0000-0000-000000000001")
+		(at 125 117)
+		(property "Reference" "R2"
+			(at 0 -2 0)
+			(layer "F.SilkS")
+			(uuid "aa000009-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "1k"
+			(at 0 2 0)
+			(layer "F.SilkS")
+			(uuid "aa000009-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "+3V3")
+			(uuid "aa000009-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "LED_A")
+			(uuid "aa000009-2222-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Resistor_SMD:LED_0805_2012Metric"
+		(layer "F.Cu")
+		(uuid "aa00000a-0000-0000-0000-000000000001")
+		(at 130 117)
+		(property "Reference" "D1"
+			(at 0 -2 0)
+			(layer "F.SilkS")
+			(uuid "aa00000a-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "Green"
+			(at 0 2 0)
+			(layer "F.SilkS")
+			(uuid "aa00000a-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "LED_A")
+			(uuid "aa00000a-1111-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 1 0)
+			(size 1.2 1.4)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa00000a-2222-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Connector_PinHeader_2.54mm:PinHeader_1x06"
+		(layer "F.Cu")
+		(uuid "aa00000b-0000-0000-0000-000000000001")
+		(at 145 100)
+		(property "Reference" "J2"
+			(at -3 0 0)
+			(layer "F.SilkS")
+			(uuid "aa00000b-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+				(justify right)
+			)
+		)
+		(property "Value" "PROG/IO"
+			(at 3 0 0)
+			(layer "F.SilkS")
+			(uuid "aa00000b-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+				(justify left)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "885b9450-885b-4450-885b-9450885b9450")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "885b9450-885b-4450-885b-9450885b9450")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" thru_hole rect
+			(at 0 0)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "+3V3")
+			(uuid "aa00000b-0001-1111-1111-000000000001")
+		)
+		(pad "2" thru_hole oval
+			(at 0 2.54)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "GND")
+			(uuid "aa00000b-0002-1111-1111-000000000001")
+		)
+		(pad "3" thru_hole oval
+			(at 0 5.08)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "RST")
+			(uuid "aa00000b-0003-1111-1111-000000000001")
+		)
+		(pad "4" thru_hole oval
+			(at 0 7.62)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "PA1")
+			(uuid "aa00000b-0004-1111-1111-000000000001")
+		)
+		(pad "5" thru_hole oval
+			(at 0 10.16)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "PA2")
+			(uuid "aa00000b-0005-1111-1111-000000000001")
+		)
+		(pad "6" thru_hole oval
+			(at 0 12.7)
+			(size 1.7 1.7)
+			(drill 1)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(net "PA3")
+			(uuid "aa00000b-0006-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "MountingHole:MountingHole_3.2mm_M3"
+		(layer "F.Cu")
+		(uuid "aa00000c-0000-0000-0000-000000000001")
+		(at 100 100)
+		(property "Reference" "H1"
+			(at 0 -3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000c-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 0 3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000c-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "" thru_hole circle
+			(at 0 0)
+			(size 6 6)
+			(drill 3.2)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(uuid "aa00000c-1111-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "MountingHole:MountingHole_3.2mm_M3"
+		(layer "F.Cu")
+		(uuid "aa00000d-0000-0000-0000-000000000001")
+		(at 150 100)
+		(property "Reference" "H2"
+			(at 0 -3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000d-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 0 3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000d-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "" thru_hole circle
+			(at 0 0)
+			(size 6 6)
+			(drill 3.2)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(uuid "aa00000d-1111-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "MountingHole:MountingHole_3.2mm_M3"
+		(layer "F.Cu")
+		(uuid "aa00000e-0000-0000-0000-000000000001")
+		(at 100 120)
+		(property "Reference" "H3"
+			(at 0 -3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000e-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 0 3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000e-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "" thru_hole circle
+			(at 0 0)
+			(size 6 6)
+			(drill 3.2)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(uuid "aa00000e-1111-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "MountingHole:MountingHole_3.2mm_M3"
+		(layer "F.Cu")
+		(uuid "aa00000f-0000-0000-0000-000000000001")
+		(at 150 120)
+		(property "Reference" "H4"
+			(at 0 -3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000f-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Value" "M3"
+			(at 0 3.5 0)
+			(layer "F.SilkS")
+			(uuid "aa00000f-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "" thru_hole circle
+			(at 0 0)
+			(size 6 6)
+			(drill 3.2)
+			(layers "*.Cu" "*.Mask")
+			(remove_unused_layers no)
+			(uuid "aa00000f-1111-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(gr_rect
+		(start 95 95)
+		(end 155 125)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(fill no)
+		(layer "Edge.Cuts")
+		(uuid "f0000001-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 117.3 106.9)
+		(end 121 109)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "+3V3")
+		(uuid "d0000043-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 121 109)
+		(end 130 102)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "+3V3")
+		(uuid "d0000044-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 130 102)
+		(end 132.7 108.095)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "+3V3")
+		(uuid "d0000045-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 102 107.46)
+		(end 108 109)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "d0000046-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 108 109)
+		(end 112.7 106.9)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "d0000047-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 102 112.54)
+		(end 130 113.905)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d0000048-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 130 113.905)
+		(end 145 113)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d0000049-0000-0000-0000-000000000001")
+	)
+	(embedded_fonts no)
+)

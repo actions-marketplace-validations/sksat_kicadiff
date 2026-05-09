@@ -113,3 +113,10 @@ HTML ビューアはマニフェストと画像参照を全部 inline にした 
   `.kicad_pcb` / `.kicad_sch` を編集するたびに kicadiff を走らせて
   プレビューを更新する Claude Code の PostToolUse hook
   (`.claude/settings.json` から `kicadiff hook` を呼ぶだけ) を同梱している
+- `examples/mcu-board/` — もう少し実用度のある小型ボード例。
+  8 ピン MCU を中心に「周りに普通付くやつ」(5 V → 3.3 V の
+  AMS1117 LDO、decoupling caps、pull-up 付き reset スイッチ、
+  status LED、6 ピン programming/breakout ヘッダ) が並んでいる。
+  階層回路図 (root が電源 + MCU、`peripherals.kicad_sch` 側が
+  reset / LED / header) なので、ビューアのページ tab を切り替える
+  挙動も確認できる。

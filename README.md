@@ -111,3 +111,10 @@ against unchanged content return in ~1 s vs ~5 s cold. Bypass with
   and a usable starting point. Ships with a `.claude/settings.json`
   PostToolUse hook (`kicadiff hook`) that re-renders the diff every
   time a `.kicad_pcb` / `.kicad_sch` is Edited / Written.
+- `examples/mcu-board/` — a more realistic small-board layout: an
+  8-pin MCU stand-in with the usual stuff around it (5 V → 3.3 V
+  AMS1117 LDO, decoupling caps, reset switch with pull-up, status
+  LED, and a 6-pin programming/breakout header). Hierarchical
+  schematic — root for the power chain and MCU itself,
+  `peripherals.kicad_sch` sub-sheet for the reset/LED/header — so
+  the per-page tabs in the viewer have something to switch between.
