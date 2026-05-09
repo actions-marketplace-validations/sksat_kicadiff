@@ -643,26 +643,37 @@ function buildManifest(args: {
   if (diffPng && fs.existsSync(diffPng)) m.diff = `diff/${safe}.png`;
 
   // Per-page hasDiff: when the file has selectable pages (multi-sheet sch,
-  // sym/fp libraries with multiple items), mark each "after" page with whether
-  // its rendered PNG differs from the before-side page of the same name.
-  // The viewer uses this to color page-tabs of changed pages.
+  // sym/fp libraries with multiple items), mark each page (on both sides)
+  // with whether its rendered PNG differs from the same-named page on the
+  // opposite side. The viewer's page-tab list is a union of before+after
+  // page names, so before-only pages (i.e. removed in the target ref) need
+  // to be marked too — otherwise removed sheets appear in the strip without
+  // any "this changed" indicator and are easy to miss.
   if (m.after?.pages && m.before?.pages) {
     const beforeByName = new Map(m.before.pages.map(p => [p.name, p.png]));
+    const afterByName = new Map(m.after.pages.map(p => [p.name, p.png]));
     for (const page of m.after.pages) {
       const beforeRel = beforeByName.get(page.name);
-      if (!beforeRel) { page.hasDiff = true; continue; } // new page
+      if (!beforeRel) { page.hasDiff = true; continue; } // page added in after
       try {
         const a = fs.readFileSync(path.join(outputDir, page.png));
         const b = fs.readFileSync(path.join(outputDir, beforeRel));
         page.hasDiff = !a.equals(b);
       } catch {
-        // PNG missing on one side → treat as changed
         page.hasDiff = true;
       }
+    }
+    for (const page of m.before.pages) {
+      // Pages that exist only on the before side were removed at the
+      // target ref — definitely a diff.
+      if (!afterByName.has(page.name)) page.hasDiff = true;
     }
   } else if (m.after?.pages && !m.before?.pages) {
     // No before context → every page is "new"
     for (const page of m.after.pages) page.hasDiff = true;
+  } else if (m.before?.pages && !m.after?.pages) {
+    // No after context (file deleted at target ref) → every page is "removed"
+    for (const page of m.before.pages) page.hasDiff = true;
   }
 
   return m;
@@ -692,7 +703,11 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
   // --- Resolve absolute file path ---
   let filePath = opts.filePath;
   if (!path.isAbsolute(filePath)) filePath = path.resolve(process.cwd(), filePath);
-  if (!fs.existsSync(filePath)) throw new Error(`file not found: ${filePath}`);
+  // Note: we do NOT check fs.existsSync(filePath) here. The file may have been
+  // deleted from the working tree but still exist at one of the refs we're
+  // diffing against — renderSide() will pull from git in that case. If the
+  // file is missing on both sides, the per-side renders return false and the
+  // outer "neither side rendered" check below raises a clear error.
 
   // --- Determine file type from extension ---
   let fileType: FileType;

@@ -97,8 +97,16 @@ export function parseSexp(src: string): Sexp[] {
 // =============================================================================
 
 export interface Component {
-  /** Reference designator (e.g. "U1", "C42"). Used as the diff identity. */
+  /** Reference designator (e.g. "U1", "C42"). */
   ref: string;
+  /** Sub-unit number for multi-unit schematic symbols (e.g. an opamp's two
+   *  channels share Reference "U1" but are units 1 and 2). undefined for
+   *  single-unit parts and PCB footprints. */
+  unit?: string;
+  /** Composite identity used by the differ. For sch multi-unit symbols this
+   *  is `${ref}/${unit}`; otherwise just `ref`. Two instances must NOT
+   *  collide on `key`, or one would silently overwrite the other. */
+  key: string;
   /** Value text (e.g. "100nF", "RP2040"). */
   value: string;
   /** Library ID — footprint name for PCB, symbol lib_id for sch. */
@@ -153,21 +161,25 @@ export function extractComponents(src: string, fileType: FileType): Component[] 
   const out: Component[] = [];
 
   if (fileType === "pcb") {
-    // PCB: (footprint "lib:name" ... (property "Reference" "U1" ...) ...)
+    // PCB: (footprint "lib:name" ... (property "Reference" "U1" ...) ...).
+    // Footprints are always one instance per reference (no unit concept).
     walk(tree, "footprint", node => {
       const libId = typeof node[1] === "string" ? node[1] : "";
       const ref = findProperty(node, "Reference") ?? "";
       const value = findProperty(node, "Value") ?? "";
       if (!ref) return;
       const { pos, angle } = findAt(node);
-      out.push({ ref, value, libId, pos, angle });
+      out.push({ ref, key: ref, value, libId, pos, angle });
     });
   } else if (fileType === "sch") {
-    // Schematic: (symbol (lib_id "...") ... (property "Reference" "U1" ...))
-    // Skip lib_symbols entries (these are template symbols, not instances).
+    // Schematic: (symbol (lib_id "...") ... (property "Reference" "U1" ...)).
+    // Multi-unit parts (opamps, relays, etc.) emit one (symbol ...) block per
+    // unit, all sharing the same Reference but with different `(unit N)`.
+    // Distinguish them via the `key` field so the diff doesn't collapse them.
+    // Skip lib_symbols entries (template symbols, not instances).
     walk(tree, "symbol", node => {
-      // Heuristic: instances have a (uuid ...) and (at x y) at the top level;
-      // template symbols inside (lib_symbols ...) do not.
+      // Instances have (uuid ...) and (at x y) at the top level; templates
+      // inside (lib_symbols ...) do not.
       const hasUuid = node.some(c => Array.isArray(c) && c[0] === "uuid");
       const hasAt = node.some(c => Array.isArray(c) && c[0] === "at");
       if (!hasUuid || !hasAt) return;
@@ -176,13 +188,17 @@ export function extractComponents(src: string, fileType: FileType): Component[] 
       const ref = findProperty(node, "Reference") ?? "";
       const value = findProperty(node, "Value") ?? "";
       if (!ref) return;
+      const unitNode = node.find(c => Array.isArray(c) && c[0] === "unit");
+      const unit = Array.isArray(unitNode) && typeof unitNode[1] === "string"
+        ? unitNode[1] : undefined;
+      const key = unit !== undefined ? `${ref}/${unit}` : ref;
       const { pos, angle } = findAt(node);
-      out.push({ ref, value, libId, pos, angle });
+      out.push({ ref, unit, key, value, libId, pos, angle });
     });
   }
 
-  // Sort for deterministic output (also stable across runs)
-  out.sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true }));
+  // Sort for deterministic output (stable across runs)
+  out.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
   return out;
 }
 
@@ -193,21 +209,25 @@ export function extractComponents(src: string, fileType: FileType): Component[] 
 export interface ComponentDiff {
   added: Component[];
   removed: Component[];
-  changed: { ref: string; before: Component; after: Component; fields: string[] }[];
+  /** `key` matches the corresponding before/after Component.key — for
+   *  multi-unit schematic symbols this includes the unit suffix. */
+  changed: { key: string; before: Component; after: Component; fields: string[] }[];
   unchanged: number;
 }
 
 export function diffComponents(before: Component[], after: Component[]): ComponentDiff {
-  const beforeMap = new Map(before.map(c => [c.ref, c]));
-  const afterMap = new Map(after.map(c => [c.ref, c]));
+  // Key by `c.key` so multi-unit schematic symbols (same Reference, different
+  // unit) don't overwrite each other when stuffed into a Map.
+  const beforeMap = new Map(before.map(c => [c.key, c]));
+  const afterMap = new Map(after.map(c => [c.key, c]));
 
   const added: Component[] = [];
   const removed: Component[] = [];
   const changed: ComponentDiff["changed"] = [];
   let unchanged = 0;
 
-  for (const [ref, b] of beforeMap) {
-    const a = afterMap.get(ref);
+  for (const [key, b] of beforeMap) {
+    const a = afterMap.get(key);
     if (!a) {
       removed.push(b);
       continue;
@@ -217,11 +237,11 @@ export function diffComponents(before: Component[], after: Component[]): Compone
     if (a.libId !== b.libId) fields.push("libId");
     if (a.pos !== b.pos) fields.push("pos");
     if (a.angle !== b.angle) fields.push("angle");
-    if (fields.length > 0) changed.push({ ref, before: b, after: a, fields });
+    if (fields.length > 0) changed.push({ key, before: b, after: a, fields });
     else unchanged++;
   }
-  for (const [ref, a] of afterMap) {
-    if (!beforeMap.has(ref)) added.push(a);
+  for (const [key, a] of afterMap) {
+    if (!beforeMap.has(key)) added.push(a);
   }
   return { added, removed, changed, unchanged };
 }
@@ -287,11 +307,13 @@ export function textDiff(
   const lines: string[] = [];
   lines.push(`${rel} (${fileType}): +${d.added.length} -${d.removed.length} ~${d.changed.length} =${d.unchanged}`);
 
+  // Use displayRef so multi-unit symbols show as "U1/2" rather than "U1"
+  const displayRef = (c: Component) => c.unit !== undefined ? `${c.ref}/${c.unit}` : c.ref;
   for (const c of d.added) {
-    lines.push(`  + ${c.ref} ${c.value} [${c.libId}]${c.pos ? ` at (${c.pos})` : ""}`);
+    lines.push(`  + ${displayRef(c)} ${c.value} [${c.libId}]${c.pos ? ` at (${c.pos})` : ""}`);
   }
   for (const c of d.removed) {
-    lines.push(`  - ${c.ref} ${c.value} [${c.libId}]${c.pos ? ` at (${c.pos})` : ""}`);
+    lines.push(`  - ${displayRef(c)} ${c.value} [${c.libId}]${c.pos ? ` at (${c.pos})` : ""}`);
   }
   for (const ch of d.changed) {
     const parts: string[] = [];
@@ -300,7 +322,7 @@ export function textDiff(
       const av = (ch.after as unknown as Record<string, string | undefined>)[f] ?? "";
       parts.push(`${f}: ${bv} → ${av}`);
     }
-    lines.push(`  ~ ${ch.ref}  ${parts.join(", ")}`);
+    lines.push(`  ~ ${displayRef(ch.after)}  ${parts.join(", ")}`);
   }
   return lines.join("\n");
 }
@@ -323,12 +345,15 @@ export function markdownDiff(
   lines.push("");
   lines.push(`\`+${d.added.length}\` \`-${d.removed.length}\` \`~${d.changed.length}\` \`=${d.unchanged}\``);
 
+  // Display ref includes the unit number for multi-unit schematic symbols:
+  // "U1/2" disambiguates the second unit of an opamp etc.
+  const displayRef = (c: Component) => c.unit !== undefined ? `${c.ref}/${c.unit}` : c.ref;
   if (d.added.length > 0) {
     lines.push("");
     lines.push(`### Added (${d.added.length})`);
     for (const c of d.added) {
       const at = c.pos ? ` at \`(${c.pos})\`` : "";
-      lines.push(`- \`${c.ref}\` \`${c.value}\` \`${c.libId}\`${at}`);
+      lines.push(`- \`${displayRef(c)}\` \`${c.value}\` \`${c.libId}\`${at}`);
     }
   }
   if (d.removed.length > 0) {
@@ -336,7 +361,7 @@ export function markdownDiff(
     lines.push(`### Removed (${d.removed.length})`);
     for (const c of d.removed) {
       const at = c.pos ? ` at \`(${c.pos})\`` : "";
-      lines.push(`- \`${c.ref}\` \`${c.value}\` \`${c.libId}\`${at}`);
+      lines.push(`- \`${displayRef(c)}\` \`${c.value}\` \`${c.libId}\`${at}`);
     }
   }
   if (d.changed.length > 0) {
@@ -349,7 +374,7 @@ export function markdownDiff(
         const av = (ch.after as unknown as Record<string, string | undefined>)[f] ?? "";
         parts.push(`${f}: \`${bv}\` → \`${av}\``);
       }
-      lines.push(`- \`${ch.ref}\` — ${parts.join(", ")}`);
+      lines.push(`- \`${displayRef(ch.after)}\` — ${parts.join(", ")}`);
     }
   }
   return lines.join("\n");

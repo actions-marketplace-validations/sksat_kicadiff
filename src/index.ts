@@ -403,7 +403,9 @@ async function main(): Promise<void> {
     const newline = (s: string) => stdoutIsReport ? process.stderr.write(s + "\n") : console.log(s);
     if (parsed.text) {
       if (!quiet) newline("");
-      printTextDiff(parsed);
+      // When stdout is reserved for the markdown report, route the text
+      // diff to stderr too so it doesn't get prepended to the .md file.
+      printTextDiff(parsed, stdoutIsReport ? "stderr" : "stdout");
     }
     if (parsed.markdown) {
       if (!quiet && !stdoutIsReport) newline("");
@@ -415,9 +417,11 @@ async function main(): Promise<void> {
   }
 }
 
-/** Resolve inputs and emit a structural text diff for each file to stdout.
- *  Skips file types that the text differ doesn't support (sym/fp). */
-function printTextDiff(parsed: ParsedArgs): void {
+/** Resolve inputs and emit a structural text diff for each file. By default
+ *  goes to stdout; pass "stderr" to redirect (used when stdout is reserved
+ *  for a markdown report being piped into a file). Skips file types that
+ *  the text differ doesn't support (sym/fp). */
+function printTextDiff(parsed: ParsedArgs, dest: "stdout" | "stderr" = "stdout"): void {
   const files = resolveInputs(parsed.input, parsed.scope)
     .filter(f => f.endsWith(".kicad_pcb") || f.endsWith(".kicad_sch"));
   if (files.length === 0) {
@@ -427,8 +431,11 @@ function printTextDiff(parsed: ParsedArgs): void {
   const fromRef = parsed.fromRef ?? "HEAD";
   const toRef = parsed.toRef ?? "";
   const repoRoot = repoRootOf(files[0]);
+  const out = dest === "stderr"
+    ? (s: string) => process.stderr.write(s + "\n")
+    : (s: string) => console.log(s);
   for (const f of files) {
-    console.log(textDiff(f, fromRef, toRef, repoRoot));
+    out(textDiff(f, fromRef, toRef, repoRoot));
   }
 }
 
