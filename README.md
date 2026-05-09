@@ -103,4 +103,6 @@ against unchanged content return in ~1 s vs ~5 s cold. Bypass with
 - `DESIGN.md` — architecture, render pipeline, cache key shape,
   manifest schema, viewer mode semantics
 - `examples/blink/` — minimal KiCad project used as the test fixture
-  and a usable starting point
+  and a usable starting point. Ships with a `.claude/` PostToolUse
+  hook that re-renders the diff every time a `.kicad_pcb` /
+  `.kicad_sch` is Edited / Written.

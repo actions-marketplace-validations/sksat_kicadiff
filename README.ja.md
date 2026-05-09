@@ -104,4 +104,7 @@ HTML ビューアはマニフェストと画像参照を全部 inline にした 
 
 - `DESIGN.md` — アーキテクチャ、レンダリングパイプライン、キャッシュ
   キーの構成、マニフェスト schema、ビューア表示モードのセマンティクス
-- `examples/blink/` — テスト fixture 兼サンプルプロジェクト (最小構成)
+- `examples/blink/` — テスト fixture 兼サンプルプロジェクト (最小構成)。
+  `.kicad_pcb` / `.kicad_sch` を編集するたびに kicadiff を走らせて
+  プレビューを更新する Claude Code の PostToolUse hook (`.claude/`)
+  を同梱している
