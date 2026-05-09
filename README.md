@@ -77,6 +77,11 @@ kicadiff project/ --open=/usr/bin/open  # arbitrary command
 kicadiff project/ -v                    # verbose summary (full PNG paths)
 kicadiff project/ -q                    # suppress summary
 kicadiff project/ --no-cache            # bypass the render cache
+
+# Claude Code PostToolUse hook integration. Reads the hook JSON from
+# stdin, renders only when the edited file is .kicad_pcb / .kicad_sch.
+# Default: --open vscode (override with --open <target> as usual).
+kicadiff hook
 ```
 
 ## Output
@@ -103,6 +108,6 @@ against unchanged content return in ~1 s vs ~5 s cold. Bypass with
 - `DESIGN.md` — architecture, render pipeline, cache key shape,
   manifest schema, viewer mode semantics
 - `examples/blink/` — minimal KiCad project used as the test fixture
-  and a usable starting point. Ships with a `.claude/` PostToolUse
-  hook that re-renders the diff every time a `.kicad_pcb` /
-  `.kicad_sch` is Edited / Written.
+  and a usable starting point. Ships with a `.claude/settings.json`
+  PostToolUse hook (`kicadiff hook`) that re-renders the diff every
+  time a `.kicad_pcb` / `.kicad_sch` is Edited / Written.

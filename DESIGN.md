@@ -12,7 +12,10 @@ vs 作業ツリーなど) の差分を、人間が視覚的に確認できる形
 - PR description / commit message にそのまま貼れる markdown レポート
 - 構造的な (component 単位の) 差分を機械可読な形 (テキスト) でも出す
 - Claude Code の PostToolUse hook から呼べるように、CLI として安定
-  したインターフェイスを提供する
+  したインターフェイスを提供する。`kicadiff hook` サブコマンドが
+  stdin の hook JSON を直接受け取り、編集対象が KiCad ファイルなら
+  レンダリングを実行する (これがあるので利用側は wrapper script を
+  書く必要がない)。
 
 ## ランタイム依存の縮約
 

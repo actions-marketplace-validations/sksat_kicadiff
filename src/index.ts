@@ -10,6 +10,9 @@
  *   kicadiff <r1>..<r2> <input>              Same as above (range syntax)
  *   kicadiff <ref> -- <input>                Explicit `--` separator
  *   kicadiff pcb|sch <file>                  Subcommand (single-file scoped)
+ *   kicadiff hook                            Read PostToolUse JSON from stdin
+ *                                            and render if a KiCad file was
+ *                                            edited (Claude Code integration).
  */
 
 import { spawnSync } from "node:child_process";
@@ -35,6 +38,9 @@ Subcommands:
   symbol     Alias for \`sym\`
   fp         Render footprint diff (.kicad_mod file or .pretty/ directory)
   footprint  Alias for \`fp\`
+  hook       Claude Code PostToolUse adapter: read the hook JSON from stdin,
+             render only when the edited file is .kicad_pcb / .kicad_sch.
+             Defaults to \`--open vscode\`; pass \`--open ...\` to override.
 
 Inputs (positional):
   <input>    One of:
@@ -356,11 +362,73 @@ function parseArgs(argv: string[]): ParsedArgs {
   };
 }
 
+/** Read all of stdin synchronously. Used by the `hook` subcommand to consume
+ *  the PostToolUse JSON Claude Code pipes in. We deliberately use the
+ *  fd-based `readFileSync(0, ...)` form: it's available on every runtime
+ *  (Node, Bun) and avoids the async/streaming dance that `process.stdin`
+ *  would otherwise require for what is essentially a one-shot read. */
+function readStdinSync(): string {
+  try {
+    return fs.readFileSync(0, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Translate a Claude Code PostToolUse hook invocation into normal kicadiff
+ *  arguments. Returns the synthesized argv to feed into parseArgs, or `null`
+ *  if the hook should be a no-op (the edited file isn't a KiCad file, or
+ *  doesn't exist). The shape of the input is documented at:
+ *  https://docs.anthropic.com/en/docs/claude-code/hooks#hook-input
+ *
+ *  Default behavior mirrors the previous shell wrapper: render with
+ *  `--open vscode` so the diff opens automatically in a Live Preview tab.
+ *  Anything the caller already passed (e.g. `--open firefox`) wins. */
+function expandHookArgs(restArgs: string[]): string[] | null {
+  const stdin = readStdinSync();
+  let data: { tool_input?: { file_path?: string } };
+  try {
+    data = JSON.parse(stdin);
+  } catch (e) {
+    console.error(`kicadiff hook: invalid JSON on stdin: ${(e as Error).message}`);
+    process.exit(1);
+  }
+  const filePath = data?.tool_input?.file_path ?? "";
+  // Quietly skip non-KiCad edits — the hook fires on every Edit/Write, so
+  // it must be cheap and silent for the common case.
+  if (!filePath) return null;
+  if (!filePath.endsWith(".kicad_pcb") && !filePath.endsWith(".kicad_sch")) {
+    return null;
+  }
+  const abs = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(process.cwd(), filePath);
+  // The path may be reported for a delete or for a write that hasn't flushed
+  // yet — either way, no file = nothing to diff.
+  if (!fs.existsSync(abs)) return null;
+
+  const hasOpen = restArgs.some(a => a === "--open" || a.startsWith("--open="));
+  const out = [...restArgs];
+  if (!hasOpen) out.push("--open", "vscode");
+  out.push(abs);
+  return out;
+}
+
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
+  let argv = process.argv.slice(2);
   if (argv[0] === "-h" || argv[0] === "--help") {
     usage();
     process.exit(0);
+  }
+
+  if (argv[0] === "hook") {
+    if (argv[1] === "-h" || argv[1] === "--help") {
+      usage();
+      process.exit(0);
+    }
+    const expanded = expandHookArgs(argv.slice(1));
+    if (expanded === null) process.exit(0);
+    argv = expanded;
   }
 
   let parsed: ParsedArgs;

@@ -40,13 +40,18 @@ const PROJECT_HTML = "blink_diff.html"; // combined HTML name from projectSafeNa
  *  in the test stay inside the project tree. */
 function runCli(
   args: string[],
-  options: { allowFailure?: boolean; env?: NodeJS.ProcessEnv } = {},
+  options: { allowFailure?: boolean; env?: NodeJS.ProcessEnv; input?: string } = {},
 ): { status: number; stderr: string } {
   const r = spawnSync(CLI, args, {
     cwd: PROJECT_DIR,
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    // When `input` is provided, spawnSync attaches a writable stdin pipe
+    // automatically; otherwise stdin is closed.
+    stdio: options.input !== undefined
+      ? ["pipe", "pipe", "pipe"]
+      : ["ignore", "pipe", "pipe"],
     env: options.env ?? process.env,
+    input: options.input,
   });
   const status = r.status ?? 1;
   if (!options.allowFailure && status !== 0) {
@@ -673,5 +678,104 @@ test.describe("footprint rendering", () => {
     // Multiple .kicad_mod files = multiple file entries
     expect(m.files.length).toBeGreaterThan(1);
     expect(m.files.every((f: any) => f.type === "fp")).toBe(true);
+  });
+});
+
+// =============================================================================
+// `hook` subcommand: read PostToolUse JSON from stdin, render only when the
+// edited file is .kicad_pcb / .kicad_sch. Replaces the small bash wrapper
+// users would otherwise have to write under .claude/hooks/.
+// =============================================================================
+
+test.describe("hook subcommand", () => {
+  /** Build a PostToolUse-shaped JSON payload. We mirror the fields Claude Code
+   *  actually sends so the test exercises the same parsing path the wrapper
+   *  used to do in shell. */
+  const hookInput = (filePath: string) =>
+    JSON.stringify({ tool_name: "Edit", tool_input: { file_path: filePath } });
+
+  test("non-KiCad file → exits 0 without rendering", () => {
+    const r = runCli(["hook", "--output-dir", outputDir], {
+      input: hookInput("src/index.ts"),
+      env: { ...process.env, KICADIFF_OPEN_CMD: "" },
+    });
+    expect(r.status).toBe(0);
+    // outputDir must remain empty — no render, no opener invocation.
+    expect(fs.readdirSync(outputDir)).toHaveLength(0);
+  });
+
+  test("missing file_path → exits 0 without rendering", () => {
+    const r = runCli(["hook", "--output-dir", outputDir], {
+      input: JSON.stringify({ tool_name: "Edit", tool_input: {} }),
+      env: { ...process.env, KICADIFF_OPEN_CMD: "" },
+    });
+    expect(r.status).toBe(0);
+    expect(fs.readdirSync(outputDir)).toHaveLength(0);
+  });
+
+  test("file_path pointing at a non-existent KiCad file → exits 0", () => {
+    // Edge case: Claude Code reports the path of a *new* Write that hasn't
+    // been flushed yet, or a delete. Either way: no file = nothing to render.
+    const r = runCli(["hook", "--output-dir", outputDir], {
+      input: hookInput("/tmp/does-not-exist.kicad_pcb"),
+      env: { ...process.env, KICADIFF_OPEN_CMD: "" },
+    });
+    expect(r.status).toBe(0);
+    expect(fs.readdirSync(outputDir)).toHaveLength(0);
+  });
+
+  test("invalid JSON on stdin → exits non-zero with a helpful error", () => {
+    const r = runCli(["hook"], {
+      input: "this is not json",
+      allowFailure: true,
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/json/i);
+  });
+
+  test(".kicad_pcb file_path triggers the normal render", () => {
+    const r = runCli(["hook", "--output-dir", outputDir], {
+      input: hookInput(PCB_FILE),
+      env: { ...process.env, KICADIFF_OPEN_CMD: "" },
+    });
+    expect(r.status).toBe(0);
+    const png = path.join(outputDir, `after/${SAFE_PCB}.png`);
+    expect(fs.existsSync(png)).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, PROJECT_HTML))).toBe(true);
+  });
+
+  test(".kicad_sch file_path triggers the normal render", () => {
+    const r = runCli(["hook", "--output-dir", outputDir], {
+      input: hookInput(SCH_FILE),
+      env: { ...process.env, KICADIFF_OPEN_CMD: "" },
+    });
+    expect(r.status).toBe(0);
+    const png = path.join(outputDir, `after/${SAFE_SCH}.png`);
+    expect(fs.existsSync(png)).toBe(true);
+  });
+
+  test("default opener is invoked (vscode-equivalent) for KiCad files", () => {
+    const { script, log } = makeOpenerMock(outputDir);
+    // The default `kicadiff hook` behavior matches the original shell wrapper:
+    // render and auto-open, so the user gets a Live Preview tab without doing
+    // anything else. We exercise that by routing the open through a mock.
+    runCli(["hook", "--output-dir", outputDir], {
+      input: hookInput(PCB_FILE),
+      env: { ...process.env, KICADIFF_OPEN_CMD: script },
+    });
+    expect(fs.existsSync(log)).toBe(true);
+    expect(fs.readFileSync(log, "utf8")).toContain(PROJECT_HTML);
+  });
+
+  test("explicit --open=<cmd> overrides the default opener", () => {
+    const { script, log } = makeOpenerMock(outputDir);
+    // Clear KICADIFF_OPEN_CMD so the per-invocation --open=<cmd> takes effect.
+    const env = { ...process.env };
+    delete env.KICADIFF_OPEN_CMD;
+    runCli(["hook", `--open=${script}`, "--output-dir", outputDir], {
+      input: hookInput(PCB_FILE),
+      env,
+    });
+    expect(fs.existsSync(log)).toBe(true);
   });
 });

@@ -78,6 +78,11 @@ kicadiff project/ --open=/usr/bin/open  # 任意のコマンド
 kicadiff project/ -v                    # PNG パスまで出すサマリ
 kicadiff project/ -q                    # サマリ抑止
 kicadiff project/ --no-cache            # キャッシュをバイパス
+
+# Claude Code PostToolUse hook 統合。stdin から hook の JSON を読んで、
+# 編集対象が .kicad_pcb / .kicad_sch のときだけレンダリングする。
+# デフォルトは `--open vscode` (`--open <target>` で上書き可)。
+kicadiff hook
 ```
 
 ## 出力先
@@ -106,5 +111,5 @@ HTML ビューアはマニフェストと画像参照を全部 inline にした 
   キーの構成、マニフェスト schema、ビューア表示モードのセマンティクス
 - `examples/blink/` — テスト fixture 兼サンプルプロジェクト (最小構成)。
   `.kicad_pcb` / `.kicad_sch` を編集するたびに kicadiff を走らせて
-  プレビューを更新する Claude Code の PostToolUse hook (`.claude/`)
-  を同梱している
+  プレビューを更新する Claude Code の PostToolUse hook
+  (`.claude/settings.json` から `kicadiff hook` を呼ぶだけ) を同梱している
