@@ -19,17 +19,31 @@ const SAFE_PCB = "PicoBridge_pcb_PicoBridge.kicad_pcb";
 const SAFE_SCH = "PicoBridge_pcb_PicoBridge.kicad_sch";
 
 /** Run kicadiff CLI and return its exit code, capturing stderr for diagnostics. */
-function runCli(args: string[], options: { allowFailure?: boolean } = {}): { status: number; stderr: string } {
+function runCli(
+  args: string[],
+  options: { allowFailure?: boolean; env?: NodeJS.ProcessEnv } = {},
+): { status: number; stderr: string } {
   const r = spawnSync("bash", [CLI, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    env: options.env ?? process.env,
   });
   const status = r.status ?? 1;
   if (!options.allowFailure && status !== 0) {
     throw new Error(`kicadiff failed (${status}): ${r.stderr}`);
   }
   return { status, stderr: r.stderr ?? "" };
+}
+
+/** Create a mock "opener" script that records its argv to a log file.
+ *  Returns the script path and the log path. */
+function makeOpenerMock(dir: string): { script: string; log: string } {
+  const log = path.join(dir, "open.log");
+  const script = path.join(dir, "fake-opener.sh");
+  fs.writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' "$1" >> "${log}"\n`);
+  fs.chmodSync(script, 0o755);
+  return { script, log };
 }
 
 /** Read the manifest JSON injected into a generated diff HTML. */
@@ -224,5 +238,110 @@ test.describe("Git ref handling", () => {
     runCli([PCB_FILE, "--from", "HEAD", "--output-dir", outputDir]);
     const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
     expect(m.hasBefore).toBe(true);
+  });
+});
+
+// =============================================================================
+// git diff-compatible positional ref syntax
+// =============================================================================
+
+test.describe("git diff compatible CLI", () => {
+  test("single positional ref: `kicadiff <ref> <file>`", () => {
+    runCli(["HEAD", PCB_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
+    expect(m.hasBefore).toBe(true);
+  });
+
+  test("two positional refs: `kicadiff <r1> <r2> <file>`", () => {
+    runCli(["HEAD", "HEAD", PCB_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
+    // Both sides rendered from HEAD — should match
+    expect(m.hasBefore).toBe(true);
+  });
+
+  test("`..` range syntax: `kicadiff <r1>..<r2> <file>`", () => {
+    runCli(["HEAD..HEAD", PCB_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
+    expect(m.hasBefore).toBe(true);
+  });
+
+  test("`--` separator: `kicadiff <ref> -- <file>`", () => {
+    // Flags must come before `--` (everything after `--` is a path)
+    runCli(["--output-dir", outputDir, "HEAD", "--", PCB_FILE]);
+    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
+    expect(m.hasBefore).toBe(true);
+  });
+
+  test("rejects three positional refs", () => {
+    const r = runCli(
+      ["HEAD", "HEAD", "HEAD", PCB_FILE, "--output-dir", outputDir],
+      { allowFailure: true },
+    );
+    expect(r.status).not.toBe(0);
+  });
+
+  test("rejects bad ref", () => {
+    const r = runCli(
+      ["this-ref-does-not-exist", PCB_FILE, "--output-dir", outputDir],
+      { allowFailure: true },
+    );
+    expect(r.status).not.toBe(0);
+  });
+});
+
+// =============================================================================
+// --open flag and KICADIFF_OPEN_CMD mock
+// =============================================================================
+
+test.describe("auto-open behavior", () => {
+  test("default: no open command is invoked", () => {
+    const { script, log } = makeOpenerMock(outputDir);
+    runCli([PCB_FILE, "--output-dir", outputDir], {
+      env: { ...process.env, KICADIFF_OPEN_CMD: script },
+    });
+    // Without --open, the command should never run regardless of env
+    expect(fs.existsSync(log)).toBe(false);
+  });
+
+  test("--open invokes the configured opener", () => {
+    const { script, log } = makeOpenerMock(outputDir);
+    runCli([PCB_FILE, "--output-dir", outputDir, "--open"], {
+      env: { ...process.env, KICADIFF_OPEN_CMD: script },
+    });
+    expect(fs.existsSync(log)).toBe(true);
+    expect(fs.readFileSync(log, "utf8")).toContain(`${SAFE_PCB}_diff.html`);
+  });
+
+  test("--open vscode is parsed as a known target", () => {
+    const { script, log } = makeOpenerMock(outputDir);
+    runCli([PCB_FILE, "--output-dir", outputDir, "--open", "vscode"], {
+      env: { ...process.env, KICADIFF_OPEN_CMD: script },
+    });
+    expect(fs.existsSync(log)).toBe(true);
+  });
+
+  test("--open=<cmd> accepts arbitrary command via `=` syntax", () => {
+    const { script, log } = makeOpenerMock(outputDir);
+    runCli([PCB_FILE, "--output-dir", outputDir, `--open=${script}`], {
+      env: { ...process.env },
+    });
+    expect(fs.existsSync(log)).toBe(true);
+  });
+
+  test("KICADIFF_OPEN_CMD='' suppresses open even with --open", () => {
+    const log = path.join(outputDir, "open.log");
+    runCli([PCB_FILE, "--output-dir", outputDir, "--open"], {
+      env: { ...process.env, KICADIFF_OPEN_CMD: "" },
+    });
+    expect(fs.existsSync(log)).toBe(false);
+  });
+
+  test("--images-only does not produce HTML or trigger open", () => {
+    const { script, log } = makeOpenerMock(outputDir);
+    runCli([PCB_FILE, "--output-dir", outputDir, "--open", "--images-only"], {
+      env: { ...process.env, KICADIFF_OPEN_CMD: script },
+    });
+    expect(fs.existsSync(log)).toBe(false);
+    expect(fs.existsSync(path.join(outputDir, `${SAFE_PCB}_diff.html`))).toBe(false);
   });
 });

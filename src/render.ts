@@ -30,6 +30,14 @@ export interface RenderOptions {
   fromRef?: string;
   /** "After" git ref. Default: "" (working tree). Use a ref name to compare two commits. */
   toRef?: string;
+  /** Open the resulting HTML after rendering.
+   *   - undefined: don't auto-open (default)
+   *   - "xdg": xdg-open (system default)
+   *   - "vscode": `code -r` (VSCode tab)
+   *   - any other string: treated as an executable name (e.g. "firefox",
+   *     "chromium"); spawned with the HTML path as its argument.
+   *  Override with KICADIFF_OPEN_CMD env var (full command, html path appended). */
+  open?: string;
 }
 
 export interface RenderResult {
@@ -352,16 +360,52 @@ export function render(opts: RenderOptions): RenderResult {
   fs.writeFileSync(diffHtml, html);
   result.diffHtml = diffHtml;
 
-  // --- Open in VSCode (non-blocking; detach so it doesn't keep us waiting) ---
-  if (hasCommand("code")) {
-    const child = spawn("code", ["-r", diffHtml], {
-      stdio: "ignore",
-      detached: true,
-    });
-    child.unref();
+  // --- Auto-open the diff HTML (non-blocking) ---
+  if (opts.open !== undefined) {
+    openInEditor(diffHtml, opts.open);
   }
 
   return result;
+}
+
+/** Map well-known short names to their actual command + flags.
+ *  Anything not in this map is treated as a literal executable name. */
+const OPEN_ALIASES: Record<string, [string, string[]]> = {
+  xdg: ["xdg-open", []],
+  vscode: ["code", ["-r"]],
+  code: ["code", ["-r"]],
+};
+
+/** Spawn an external command to open the diff HTML.
+ *  Honors KICADIFF_OPEN_CMD env var for testing/customization.
+ *  Returns silently if the command isn't available. */
+function openInEditor(htmlPath: string, target: string): void {
+  // Env var takes precedence — useful for testing and custom configurations
+  const overrideCmd = process.env.KICADIFF_OPEN_CMD;
+  let cmd: string;
+  let args: string[];
+  if (overrideCmd !== undefined) {
+    if (overrideCmd === "") return; // explicit no-op
+    const parts = overrideCmd.split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return;
+    cmd = parts[0];
+    args = [...parts.slice(1), htmlPath];
+  } else {
+    const alias = OPEN_ALIASES[target];
+    if (alias) {
+      [cmd, args] = [alias[0], [...alias[1], htmlPath]];
+    } else {
+      // Unknown target — treat as a literal executable name (firefox, chromium, etc.)
+      cmd = target;
+      args = [htmlPath];
+    }
+  }
+  if (!hasCommand(cmd)) {
+    console.error(`Warning: open command not found: ${cmd}`);
+    return;
+  }
+  const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+  child.unref();
 }
 
 /** Print a human-readable summary, used by the CLI / Claude Code hook. */
