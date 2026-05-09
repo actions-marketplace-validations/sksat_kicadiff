@@ -2530,14 +2530,13 @@
 			)
 		)
 		(property "Value" "AMS1117-3.3"
-			(at 88 85 0)
+			(at 80 95 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
 			)
 		)
 		(property "Footprint" "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
@@ -2935,7 +2934,7 @@
 		(dnp no)
 		(uuid "5e000008-0000-0000-0000-000000000001")
 		(property "Reference" "SW1"
-			(at 127 102 0)
+			(at 135 105 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -2946,7 +2945,7 @@
 			)
 		)
 		(property "Value" "Reset"
-			(at 127 108 0)
+			(at 135 108 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
