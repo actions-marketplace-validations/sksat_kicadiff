@@ -314,6 +314,7 @@ function buildViews() {
     $('#ovl-over').style.opacity = e.target.value / 100;
   });
   setupSwipe();
+  attachSwipeScrollHandler();
   applyLayers();
 }
 
@@ -438,10 +439,14 @@ function setupSwipe() {
 
   function onMove(clientX) {
     const wrap = $('#swipe-wrap');
-    if (!wrap) return;
+    const bodyEl = $('#swipe-body');
+    if (!wrap || !bodyEl) return;
+    // Account for horizontal scroll: clientX is viewport-relative, but we
+    // need position relative to the full image width (not just visible portion).
     const rect = wrap.getBoundingClientRect();
-    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
-    const pct = (x / rect.width) * 100;
+    const x = clientX - rect.left + bodyEl.scrollLeft;
+    const fullWidth = wrap.scrollWidth;
+    const pct = Math.max(0, Math.min((x / fullWidth) * 100, 100));
     swipePct = pct;
     positionSwipe();
   }
@@ -457,32 +462,40 @@ function setupSwipe() {
 }
 
 /* Update divider position and clip-path.
-   Divider is a child of swp view, but needs to align with compare-wrap
-   which may be centered (narrower than the view). Convert compare-wrap
-   coordinates to swp view coordinates for correct pixel positioning. */
+   clip-path uses percentage (scroll-independent, always correct).
+   Divider is a child of swp view, positioned in viewport coordinates
+   so it stays visible regardless of scroll state.
+   We subtract scrollLeft from the wrap offset to keep the divider
+   aligned with the visible portion of the image. */
 function positionSwipe() {
   const swpView = $('#view-swp');
   const wrap = $('#swipe-wrap');
+  const bodyEl = $('#swipe-body');
   const over = $('#swp-over');
   const divider = $('#swipe-divider');
-  if (!swpView || !wrap) return;
+  if (!swpView || !wrap || !bodyEl) return;
 
-  // clip-path on the before overlay (percentage of compare-wrap)
+  // clip-path on the before overlay (percentage — scroll-independent)
   if (over) over.style.clipPath = `inset(0 ${100 - swipePct}% 0 0)`;
 
-  // Divider position: convert compare-wrap-relative to swp-view-relative
+  // Divider pixel position: convert image-relative to viewport-relative
   const swpRect = swpView.getBoundingClientRect();
   const wrapRect = wrap.getBoundingClientRect();
   const wrapOffset = wrapRect.left - swpRect.left;
-  const xInWrap = (swipePct / 100) * wrapRect.width;
+  const xInWrap = (swipePct / 100) * wrap.scrollWidth - bodyEl.scrollLeft;
   if (divider) divider.style.left = (wrapOffset + xInWrap) + 'px';
 }
 
-/* Re-position on resize — percentage stays the same but pixel
-   positions change as compare-wrap reflowes. */
+/* Re-position divider on resize or scroll — percentage stays the same
+   but pixel positions change as compare-wrap reflows or scrolls. */
 window.addEventListener('resize', () => {
   if (currentView === 'swp') positionSwipe();
 });
+// Scroll handler is attached after buildViews creates the element
+function attachSwipeScrollHandler() {
+  const bodyEl = $('#swipe-body');
+  if (bodyEl) bodyEl.addEventListener('scroll', () => positionSwipe());
+}
 
 init();
 </script>

@@ -210,9 +210,10 @@ fi
 # =============================================================================
 HAS_BEFORE=false
 if [[ -n "$REPO_ROOT" ]] && git -C "$REPO_ROOT" cat-file -e "HEAD:$REL_PATH" 2>/dev/null; then
-  # mktemp で一時ファイルを作成（同ディレクトリ内）
-  # --suffix で拡張子を維持し、XXXXXX をテンプレート末尾に置くことでポータブルに動作させる
-  TEMP_BEFORE=$(mktemp -p "$(dirname "$FILE_PATH")" --suffix=".$(basename "$FILE_PATH")" "_preview_XXXXXX")
+  # mktemp で一時ファイルを作成（同ディレクトリ内、拡張子を維持）
+  # テンプレート引数のみ使用（--suffix と併用不可）。XXXXXX は末尾に配置。
+  # 拡張子は kicad-cli がファイルタイプを判定するために必要。
+  TEMP_BEFORE=$(mktemp -p "$(dirname "$FILE_PATH")" "preview_XXXXXX.${FILE_PATH##*.}")
   git -C "$REPO_ROOT" show "HEAD:$REL_PATH" > "$TEMP_BEFORE"
 
   if [[ "$FILE_TYPE" == "pcb" ]]; then
@@ -310,7 +311,7 @@ PYEOF
 # </script> が JSON 内に含まれるケースに備え、</ をエスケープする
 # =============================================================================
 DIFF_HTML="$OUTPUT_DIR/${SAFE_NAME}_diff.html"
-ESCAPED_MANIFEST=$(echo "$MANIFEST" | sed 's|</|<\\/|g')
+ESCAPED_MANIFEST=$(printf '%s' "$MANIFEST" | sed 's|</|<\\/|g')
 {
   echo "<script>window.MANIFEST = $ESCAPED_MANIFEST;</script>"
   cat "$VIEWER_DIR/viewer.html"
