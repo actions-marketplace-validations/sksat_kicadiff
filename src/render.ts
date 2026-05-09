@@ -403,10 +403,11 @@ function buildManifest(args: {
   outputDir: string;
   safe: string;
   hasBefore: boolean;
+  hasDiff?: boolean;
   diffPng?: string;
   schRootName?: string;
 }): Manifest {
-  const { relPath, fileType, outputDir, safe, hasBefore, diffPng, schRootName } = args;
+  const { relPath, fileType, outputDir, safe, hasBefore, hasDiff, diffPng, schRootName } = args;
 
   function buildSide(side: "before" | "after"): SideManifest {
     const out: SideManifest = { combined: `${side}/${safe}.png` };
@@ -424,7 +425,32 @@ function buildManifest(args: {
 
   const m: Manifest = { file: relPath, type: fileType, hasBefore, after: buildSide("after") };
   if (hasBefore) m.before = buildSide("before");
+  if (hasDiff !== undefined) m.hasDiff = hasDiff;
   if (diffPng && fs.existsSync(diffPng)) m.diff = `diff/${safe}.png`;
+
+  // Per-page hasDiff: when the file has selectable pages (multi-sheet sch,
+  // sym/fp libraries with multiple items), mark each "after" page with whether
+  // its rendered PNG differs from the before-side page of the same name.
+  // The viewer uses this to color page-tabs of changed pages.
+  if (m.after.pages && m.before?.pages) {
+    const beforeByName = new Map(m.before.pages.map(p => [p.name, p.png]));
+    for (const page of m.after.pages) {
+      const beforeRel = beforeByName.get(page.name);
+      if (!beforeRel) { page.hasDiff = true; continue; } // new page
+      try {
+        const a = fs.readFileSync(path.join(outputDir, page.png));
+        const b = fs.readFileSync(path.join(outputDir, beforeRel));
+        page.hasDiff = !a.equals(b);
+      } catch {
+        // PNG missing on one side → treat as changed
+        page.hasDiff = true;
+      }
+    }
+  } else if (m.after.pages && !m.before?.pages) {
+    // No before context → every page is "new"
+    for (const page of m.after.pages) page.hasDiff = true;
+  }
+
   return m;
 }
 
@@ -574,8 +600,20 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
   const schRootName = fileType === "sch"
     ? path.basename(filePath, ".kicad_sch")
     : undefined;
+
+  // Detect whether the rendering actually changed. Two PNGs that are
+  // byte-identical mean the visual diff is empty even if the source files
+  // are textually different (e.g. a reformat or a comment edit).
+  // hasDiff = true when there's no before to compare to (= new file).
+  let hasDiff = !hasBefore;
+  if (hasBefore && fs.existsSync(beforePng) && fs.existsSync(afterPng)) {
+    const beforeBuf = fs.readFileSync(beforePng);
+    const afterBuf = fs.readFileSync(afterPng);
+    hasDiff = !beforeBuf.equals(afterBuf);
+  }
+
   const manifest = buildManifest({
-    relPath, fileType, outputDir, safe, hasBefore, diffPng, schRootName,
+    relPath, fileType, outputDir, safe, hasBefore, hasDiff, diffPng, schRootName,
   });
 
   const result: RenderResult = {
@@ -845,7 +883,11 @@ function rewriteManifestPaths(m: Manifest, outDir: string, htmlDir: string): Man
       for (const [k, v] of Object.entries(s.layers)) out.layers[k] = rewrite(v);
     }
     if (s.pages) {
-      out.pages = s.pages.map(p => ({ name: p.name, png: rewrite(p.png) }));
+      out.pages = s.pages.map(p => {
+        const np: { name: string; png: string; hasDiff?: boolean } = { name: p.name, png: rewrite(p.png) };
+        if (p.hasDiff !== undefined) np.hasDiff = p.hasDiff;
+        return np;
+      });
     }
     return out;
   };
@@ -856,6 +898,7 @@ function rewriteManifestPaths(m: Manifest, outDir: string, htmlDir: string): Man
     after: rewriteSide(m.after),
   };
   if (m.before) out.before = rewriteSide(m.before);
+  if (m.hasDiff !== undefined) out.hasDiff = m.hasDiff;
   if (m.diff) out.diff = rewrite(m.diff);
   return out;
 }

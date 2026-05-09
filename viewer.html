@@ -34,6 +34,8 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
 .page-tabs button{padding:4px 10px;background:transparent;border:none;color:#999;cursor:pointer;font-size:12px;border-bottom:2px solid transparent;white-space:nowrap}
 .page-tabs button:hover{color:#ccc;background:#2a2d2e}
 .page-tabs button.active{color:#fff;border-bottom-color:#007acc}
+.page-tabs button.has-diff{color:#f0a020}
+.page-tabs button.has-diff.active{color:#ffc04d;border-bottom-color:#f0a020}
 
 .main{flex:1;overflow:hidden;position:relative}
 
@@ -119,11 +121,16 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 .diff-overlay{position:absolute;top:0;left:0;max-width:100%;height:auto;pointer-events:none;mix-blend-mode:multiply;animation:diff-pulse 1.6s ease-in-out infinite}
 
 /* --- File-level tabs (project mode) ---
-   Top-level navigation between PCB and Schematic when both are rendered. */
+   Top-level navigation between PCB and Schematic when both are rendered.
+   Tabs whose underlying file genuinely changed (before vs. after PNGs differ
+   byte-for-byte) get an amber accent so reviewers can spot real diffs at a
+   glance — files with no visual change keep the default muted gray. */
 .file-tabs{display:flex;background:#252526;border-bottom:1px solid #3c3c3c;flex-shrink:0;padding:0 8px}
 .file-tabs button{padding:6px 14px;background:transparent;border:none;color:#999;cursor:pointer;font-size:13px;border-bottom:2px solid transparent}
 .file-tabs button:hover{color:#ccc;background:#2a2d2e}
 .file-tabs button.active{color:#fff;border-bottom-color:#007acc}
+.file-tabs button.has-diff{color:#f0a020}
+.file-tabs button.has-diff.active{color:#ffc04d;border-bottom-color:#f0a020}
 </style>
 </head><body>
 
@@ -255,6 +262,7 @@ function buildPageTabs() {
     btn.textContent = p.name;
     btn.dataset.pageIdx = String(idx);
     if (idx === currentPage) btn.classList.add('active');
+    if (p.hasDiff) btn.classList.add('has-diff');
     btn.onclick = () => {
       if (idx === currentPage) return;
       currentPage = idx;
@@ -300,6 +308,8 @@ function buildFileTabs() {
     btn.textContent = fileTabLabel(f);
     btn.dataset.fileIdx = String(idx);
     if (idx === currentFileIdx) btn.classList.add('active');
+    // Mark tabs with real visual changes so reviewers can scan for diffs
+    if (f.hasDiff) btn.classList.add('has-diff');
     btn.onclick = () => {
       if (idx === currentFileIdx) return;
       currentFileIdx = idx;

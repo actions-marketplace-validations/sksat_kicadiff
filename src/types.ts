@@ -8,10 +8,12 @@ export type FileType = "pcb" | "sch" | "sym" | "fp";
 /** A single schematic page (multi-sheet support).
  *  `name` is the page identifier extracted from the SVG filename — for the root
  *  sheet it is the project basename; for subsheets it is the suffix after the
- *  project basename and `-`. */
+ *  project basename and `-`. `hasDiff` is set on the after-side entry only,
+ *  computed by comparing before/after PNG bytes for the same page name. */
 export interface SchPage {
   name: string;
   png: string;
+  hasDiff?: boolean;
 }
 
 export interface SideManifest {
@@ -35,6 +37,11 @@ export interface FileManifest {
   type: FileType;
   /** Whether the before state was successfully rendered from git HEAD */
   hasBefore: boolean;
+  /** True if the visual output actually changed between before and after.
+   *  Computed by comparing the combined PNG bytes — survives noise that doesn't
+   *  affect rendering (whitespace, comment changes). Used by the viewer to
+   *  highlight tabs that have real differences vs. tabs that don't. */
+  hasDiff?: boolean;
   after: SideManifest;
   before?: SideManifest;
   /** Diff highlight image (ImageMagick compare output), present only if both

@@ -421,6 +421,52 @@ test.describe("combined PCB + schematic", () => {
 });
 
 // =============================================================================
+// hasDiff flag — set on each FileManifest based on byte-level PNG comparison
+// =============================================================================
+
+test.describe("hasDiff flag", () => {
+  test("unchanged file → hasDiff is false", () => {
+    runCli([PCB_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    // PicoBridge is committed to git and untouched → no visual diff
+    const pcb = m.files.find((f: any) => f.type === "pcb");
+    expect(pcb.hasDiff).toBe(false);
+  });
+
+  test("schematic edit visible on render → hasDiff is true", () => {
+    if (!fs.existsSync(SCH_FILE)) test.skip();
+    // Spin up an isolated repo so we can mutate the schematic without
+    // dirtying the working tree.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "kicadiff-hasdiff-"));
+    try {
+      fs.cpSync(path.dirname(SCH_FILE), tmp, { recursive: true });
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: tmp });
+      execFileSync("git", [
+        "-c", "commit.gpgsign=false", "-c", "user.email=t@t",
+        "-c", "user.name=t", "add", ".",
+      ], { cwd: tmp });
+      execFileSync("git", [
+        "-c", "commit.gpgsign=false", "-c", "user.email=t@t",
+        "-c", "user.name=t", "commit", "-q", "-m", "init",
+      ], { cwd: tmp });
+      const schInTmp = path.join(tmp, path.basename(SCH_FILE));
+      // Schematic value text IS rendered, so an edit produces a visual diff.
+      const orig = fs.readFileSync(schInTmp, "utf8");
+      fs.writeFileSync(schInTmp, orig.replace(/100nF/g, "2.2uF"));
+
+      const r = spawnSync(CLI, ["sch", schInTmp, "--output-dir", outputDir], {
+        cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      expect(r.status).toBe(0);
+      const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+      expect(m.files[0].hasDiff).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+// =============================================================================
 // Multi-sheet schematic — pages field in manifest (length >= 1, root first)
 // =============================================================================
 
