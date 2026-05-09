@@ -1,0 +1,5 @@
+# KiCad runtime artifacts (regenerated on every open)
+*-backups/
+.history/
+*.lck
+~_autosave-*
