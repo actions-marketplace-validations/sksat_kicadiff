@@ -84,3 +84,23 @@ test("unterminated tag is emitted as literal", () => {
 test("unmatched section open is emitted as literal", () => {
   expect(renderTemplate("{{#a}}body", { a: true })).toBe("{{#a}}body");
 });
+
+// `renderInner` already trims section names, so the same input with extra
+// whitespace inside the tag should behave identically. Standard Mustache
+// implementations all do this; if we don't, custom templates that round-trip
+// through formatters (which often pad delimiters) break in surprising ways.
+test("section close tag accepts whitespace around the name", () => {
+  expect(renderTemplate("{{#x}}A{{/ x}}", { x: true })).toBe("A");
+  expect(renderTemplate("{{#x}}B{{/x }}", { x: true })).toBe("B");
+  expect(renderTemplate("{{# x }}C{{/ x }}", { x: true })).toBe("C");
+});
+
+test("nested section close tags accept whitespace too", () => {
+  // Depth tracking must still work across whitespace variants of the same
+  // key, otherwise nested same-name sections would mis-pair.
+  const out = renderTemplate(
+    "{{#x}}A{{# x}}B{{/x}}C{{/ x}}",
+    { x: { x: true } },
+  );
+  expect(out).toBe("ABC");
+});

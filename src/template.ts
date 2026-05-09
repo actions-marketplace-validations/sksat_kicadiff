@@ -63,13 +63,13 @@ function renderInner(template: string, stack: Stack): string {
       const key = tag.slice(1).trim();
       const inverted = sigil === "^";
       const innerStart = close + 2;
-      const closeIdx = findSectionEnd(template, innerStart, key);
-      if (closeIdx < 0) {
+      const end = findSectionEnd(template, innerStart, key);
+      if (end === null) {
         // Unmatched section open — emit literal and bail to avoid runaway loops.
         out += template.slice(open);
         break;
       }
-      const inner = template.slice(innerStart, closeIdx);
+      const inner = template.slice(innerStart, end.start);
       const value = lookup(stack, key);
       if (inverted) {
         if (isFalsy(value)) out += renderInner(inner, stack);
@@ -87,7 +87,7 @@ function renderInner(template: string, stack: Stack): string {
           out += renderInner(inner, stack);
         }
       }
-      i = closeIdx + ("{{/" + key + "}}").length;
+      i = end.start + end.length;
     } else if (sigil === "/") {
       // Stray close tag — skip.
       i = close + 2;
@@ -135,35 +135,37 @@ function descend(v: unknown, parts: string[]): unknown {
   return cur;
 }
 
-/** Find the offset of the matching `{{/key}}` close tag, accounting for
- *  nested same-name sections. Returns -1 if no matching close is found. */
-function findSectionEnd(s: string, from: number, key: string): number {
-  const open = "{{#" + key + "}}";
-  const openInv = "{{^" + key + "}}";
-  const close = "{{/" + key + "}}";
+/** Find the matching close tag for a section that started just before
+ *  `from`. Returns the close tag's start offset and byte length, or null
+ *  if no matching close is found.
+ *
+ *  The length is needed because tag whitespace is variable: `{{/x}}`,
+ *  `{{/ x}}`, and `{{/ x }}` are all valid and have different lengths.
+ *
+ *  We walk every `{{ … }}` occurrence rather than searching for a fixed
+ *  byte sequence, so that whitespace inside the tag is normalised the same
+ *  way `renderInner()` does for opening tags. */
+function findSectionEnd(
+  s: string,
+  from: number,
+  key: string,
+): { start: number; length: number } | null {
   let i = from;
   let depth = 0;
   while (i < s.length) {
-    // Find the next opener (either form) or closer.
-    const candidates = [s.indexOf(open, i), s.indexOf(openInv, i), s.indexOf(close, i)];
-    let next = -1;
-    let which = -1;
-    for (let k = 0; k < 3; k++) {
-      const c = candidates[k];
-      if (c < 0) continue;
-      if (next < 0 || c < next) { next = c; which = k; }
-    }
-    if (next < 0) return -1;
-    if (which === 2) {
-      // close
-      if (depth === 0) return next;
-      depth--;
-      i = next + close.length;
-    } else {
-      // open or openInv
+    const open = s.indexOf("{{", i);
+    if (open < 0) return null;
+    const close = s.indexOf("}}", open + 2);
+    if (close < 0) return null;
+    const tag = s.slice(open + 2, close).trim();
+    const sigil = tag[0];
+    if ((sigil === "#" || sigil === "^") && tag.slice(1).trim() === key) {
       depth++;
-      i = next + (which === 0 ? open.length : openInv.length);
+    } else if (sigil === "/" && tag.slice(1).trim() === key) {
+      if (depth === 0) return { start: open, length: close + 2 - open };
+      depth--;
     }
+    i = close + 2;
   }
-  return -1;
+  return null;
 }
