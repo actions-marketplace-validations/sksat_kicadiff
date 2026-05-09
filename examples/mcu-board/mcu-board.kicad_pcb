@@ -76,7 +76,7 @@
 	(footprint "Connector_PinHeader_2.54mm:PinHeader_1x02"
 		(layer "F.Cu")
 		(uuid "aa000001-0000-0000-0000-000000000001")
-		(at 102 110)
+		(at 97 110)
 		(property "Reference" "J1"
 			(at -3 0 0)
 			(layer "F.SilkS")
@@ -147,7 +147,7 @@
 	(footprint "Resistor_SMD:C_0805_2012Metric"
 		(layer "F.Cu")
 		(uuid "aa000002-0000-0000-0000-000000000001")
-		(at 108 110)
+		(at 105 110)
 		(property "Reference" "C1"
 			(at 0 -2 0)
 			(layer "F.SilkS")
@@ -212,7 +212,7 @@
 	(footprint "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
 		(layer "F.Cu")
 		(uuid "aa000003-0000-0000-0000-000000000001")
-		(at 115 110)
+		(at 113 110)
 		(property "Reference" "U2"
 			(at 0 -5 0)
 			(layer "F.SilkS")
@@ -239,7 +239,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -250,7 +250,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -291,7 +291,7 @@
 	(footprint "Resistor_SMD:C_0805_2012Metric"
 		(layer "F.Cu")
 		(uuid "aa000004-0000-0000-0000-000000000001")
-		(at 121 110)
+		(at 122 110)
 		(property "Reference" "C2"
 			(at 0 -2 0)
 			(layer "F.SilkS")
@@ -356,7 +356,7 @@
 	(footprint "Resistor_SMD:C_0805_2012Metric"
 		(layer "F.Cu")
 		(uuid "aa000005-0000-0000-0000-000000000001")
-		(at 130 102)
+		(at 133 110)
 		(property "Reference" "C3"
 			(at 0 -2 0)
 			(layer "F.SilkS")
@@ -421,7 +421,7 @@
 	(footprint "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
 		(layer "F.Cu")
 		(uuid "aa000006-0000-0000-0000-000000000001")
-		(at 130 110)
+		(at 133 117)
 		(property "Reference" "U1"
 			(at 0 -3.5 0)
 			(layer "F.SilkS")
@@ -525,93 +525,14 @@
 		)
 		(embedded_fonts no)
 	)
-	(footprint "Button_Switch_SMD:SW_SPST_TL3342"
-		(layer "F.Cu")
-		(uuid "aa000007-0000-0000-0000-000000000001")
-		(at 138 102)
-		(property "Reference" "SW1"
-			(at 0 -5 0)
-			(layer "F.SilkS")
-			(uuid "aa000007-aaaa-aaaa-aaaa-000000000001")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Value" "Reset"
-			(at 0 5 0)
-			(layer "F.SilkS")
-			(uuid "aa000007-bbbb-bbbb-bbbb-000000000001")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 0 0 0)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "f81be06f-f81b-406f-b81b-e06ff81be06f")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" ""
-			(at 0 0 0)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "f81be06f-f81b-406f-a8c8-8776e8c88776")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(duplicate_pad_numbers_are_jumpers no)
-		(pad "1" smd rect
-			(at -2.5 -3)
-			(size 1.5 1.5)
-			(layers "F.Cu" "F.Mask")
-			(net "RST")
-			(uuid "aa000007-1111-1111-1111-000000000001")
-		)
-		(pad "1" smd rect
-			(at 2.5 -3)
-			(size 1.5 1.5)
-			(layers "F.Cu" "F.Mask")
-			(net "RST")
-			(uuid "aa000007-2222-1111-1111-000000000001")
-		)
-		(pad "2" smd rect
-			(at -2.5 3)
-			(size 1.5 1.5)
-			(layers "F.Cu" "F.Mask")
-			(net "GND")
-			(uuid "aa000007-3333-1111-1111-000000000001")
-		)
-		(pad "2" smd rect
-			(at 2.5 3)
-			(size 1.5 1.5)
-			(layers "F.Cu" "F.Mask")
-			(net "GND")
-			(uuid "aa000007-4444-1111-1111-000000000001")
-		)
-		(embedded_fonts no)
-	)
 	(footprint "Resistor_SMD:R_0805_2012Metric"
 		(layer "F.Cu")
-		(uuid "aa000008-0000-0000-0000-000000000001")
-		(at 138 117)
+		(uuid "aa000007-0000-0000-0000-000000000001")
+		(at 140 110)
 		(property "Reference" "R1"
 			(at 0 -2 0)
 			(layer "F.SilkS")
-			(uuid "aa000008-aaaa-aaaa-aaaa-000000000001")
+			(uuid "aa000007-aaaa-aaaa-aaaa-000000000001")
 			(effects
 				(font
 					(size 1 1)
@@ -622,7 +543,7 @@
 		(property "Value" "10k"
 			(at 0 2 0)
 			(layer "F.SilkS")
-			(uuid "aa000008-bbbb-bbbb-bbbb-000000000001")
+			(uuid "aa000007-bbbb-bbbb-bbbb-000000000001")
 			(effects
 				(font
 					(size 1 1)
@@ -658,21 +579,100 @@
 			(size 1.2 1.4)
 			(layers "F.Cu" "F.Mask")
 			(net "+3V3")
-			(uuid "aa000008-1111-1111-1111-000000000001")
+			(uuid "aa000007-1111-1111-1111-000000000001")
 		)
 		(pad "2" smd rect
 			(at 1 0)
 			(size 1.2 1.4)
 			(layers "F.Cu" "F.Mask")
 			(net "RST")
+			(uuid "aa000007-2222-1111-1111-000000000001")
+		)
+		(embedded_fonts no)
+	)
+	(footprint "Button_Switch_SMD:SW_SPST_TL3342"
+		(layer "F.Cu")
+		(uuid "aa000008-0000-0000-0000-000000000001")
+		(at 143 117)
+		(property "Reference" "SW1"
+			(at 0 -5 0)
+			(layer "F.SilkS")
+			(uuid "aa000008-aaaa-aaaa-aaaa-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "Reset"
+			(at 0 5 0)
+			(layer "F.SilkS")
+			(uuid "aa000008-bbbb-bbbb-bbbb-000000000001")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(duplicate_pad_numbers_are_jumpers no)
+		(pad "1" smd rect
+			(at -2.5 -3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "RST")
+			(uuid "aa000008-1111-1111-1111-000000000001")
+		)
+		(pad "1" smd rect
+			(at 2.5 -3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "RST")
 			(uuid "aa000008-2222-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at -2.5 3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000008-3333-1111-1111-000000000001")
+		)
+		(pad "2" smd rect
+			(at 2.5 3)
+			(size 1.5 1.5)
+			(layers "F.Cu" "F.Mask")
+			(net "GND")
+			(uuid "aa000008-4444-1111-1111-000000000001")
 		)
 		(embedded_fonts no)
 	)
 	(footprint "Resistor_SMD:R_0805_2012Metric"
 		(layer "F.Cu")
 		(uuid "aa000009-0000-0000-0000-000000000001")
-		(at 125 117)
+		(at 148 124)
 		(property "Reference" "R2"
 			(at 0 -2 0)
 			(layer "F.SilkS")
@@ -722,14 +722,14 @@
 			(at -1 0)
 			(size 1.2 1.4)
 			(layers "F.Cu" "F.Mask")
-			(net "+3V3")
+			(net "LED_A")
 			(uuid "aa000009-1111-1111-1111-000000000001")
 		)
 		(pad "2" smd rect
 			(at 1 0)
 			(size 1.2 1.4)
 			(layers "F.Cu" "F.Mask")
-			(net "LED_A")
+			(net "PA4_OUT")
 			(uuid "aa000009-2222-1111-1111-000000000001")
 		)
 		(embedded_fonts no)
@@ -737,7 +737,7 @@
 	(footprint "Resistor_SMD:LED_0805_2012Metric"
 		(layer "F.Cu")
 		(uuid "aa00000a-0000-0000-0000-000000000001")
-		(at 130 117)
+		(at 153 124)
 		(property "Reference" "D1"
 			(at 0 -2 0)
 			(layer "F.SilkS")
@@ -764,7 +764,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(uuid "885b9450-885b-4450-885b-9450885b9450")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -775,7 +775,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "e8c88776-e8c8-4776-a8c8-8776e8c88776")
+			(uuid "885b9450-885b-4450-885b-9450885b9450")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -787,7 +787,7 @@
 			(at -1 0)
 			(size 1.2 1.4)
 			(layers "F.Cu" "F.Mask")
-			(net "LED_A")
+			(net "PA4_OUT")
 			(uuid "aa00000a-1111-1111-1111-000000000001")
 		)
 		(pad "2" smd rect
@@ -802,7 +802,7 @@
 	(footprint "Connector_PinHeader_2.54mm:PinHeader_1x06"
 		(layer "F.Cu")
 		(uuid "aa00000b-0000-0000-0000-000000000001")
-		(at 145 100)
+		(at 163 117)
 		(property "Reference" "J2"
 			(at -3 0 0)
 			(layer "F.SilkS")
@@ -831,7 +831,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "885b9450-885b-4450-885b-9450885b9450")
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -842,7 +842,7 @@
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
-			(uuid "885b9450-885b-4450-885b-9450885b9450")
+			(uuid "9888f349-9888-4349-9888-f3499888f349")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -909,7 +909,7 @@
 	(footprint "MountingHole:MountingHole_3.2mm_M3"
 		(layer "F.Cu")
 		(uuid "aa00000c-0000-0000-0000-000000000001")
-		(at 100 100)
+		(at 95 100)
 		(property "Reference" "H1"
 			(at 0 -3.5 0)
 			(layer "F.SilkS")
@@ -968,7 +968,7 @@
 	(footprint "MountingHole:MountingHole_3.2mm_M3"
 		(layer "F.Cu")
 		(uuid "aa00000d-0000-0000-0000-000000000001")
-		(at 150 100)
+		(at 165 100)
 		(property "Reference" "H2"
 			(at 0 -3.5 0)
 			(layer "F.SilkS")
@@ -1027,7 +1027,7 @@
 	(footprint "MountingHole:MountingHole_3.2mm_M3"
 		(layer "F.Cu")
 		(uuid "aa00000e-0000-0000-0000-000000000001")
-		(at 100 120)
+		(at 95 140)
 		(property "Reference" "H3"
 			(at 0 -3.5 0)
 			(layer "F.SilkS")
@@ -1086,7 +1086,7 @@
 	(footprint "MountingHole:MountingHole_3.2mm_M3"
 		(layer "F.Cu")
 		(uuid "aa00000f-0000-0000-0000-000000000001")
-		(at 150 120)
+		(at 165 140)
 		(property "Reference" "H4"
 			(at 0 -3.5 0)
 			(layer "F.SilkS")
@@ -1143,8 +1143,8 @@
 		(embedded_fonts no)
 	)
 	(gr_rect
-		(start 95 95)
-		(end 155 125)
+		(start 90 95)
+		(end 170 145)
 		(stroke
 			(width 0.15)
 			(type solid)
@@ -1153,61 +1153,217 @@
 		(layer "Edge.Cuts")
 		(uuid "f0000001-0000-0000-0000-000000000001")
 	)
+	(gr_text "expansion"
+		(at 130 138 0)
+		(layer "F.SilkS")
+		(uuid "ed00004e-0000-0000-0000-000000000001")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.25)
+			)
+		)
+	)
+	(gr_text "POWER"
+		(at 105 100 0)
+		(layer "F.SilkS")
+		(uuid "ed00004b-0000-0000-0000-000000000001")
+		(effects
+			(font
+				(size 1.5 1.5)
+				(thickness 0.25)
+			)
+		)
+	)
+	(gr_text "MCU"
+		(at 133 100 0)
+		(layer "F.SilkS")
+		(uuid "ed00004c-0000-0000-0000-000000000001")
+		(effects
+			(font
+				(size 1.5 1.5)
+				(thickness 0.25)
+			)
+		)
+	)
+	(gr_text "PERIPHERALS"
+		(at 158 100 0)
+		(layer "F.SilkS")
+		(uuid "ed00004d-0000-0000-0000-000000000001")
+		(effects
+			(font
+				(size 1.5 1.5)
+				(thickness 0.25)
+			)
+		)
+	)
 	(segment
-		(start 117.3 106.9)
-		(end 121 109)
+		(start 97 110)
+		(end 104 110)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "VIN")
+		(uuid "d000004f-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 104 110)
+		(end 104 110)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "VIN")
+		(uuid "d0000050-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 104 110)
+		(end 113 110)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "VIN")
+		(uuid "d0000051-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 113 110)
+		(end 113 106.9)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "VIN")
+		(uuid "d0000052-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 115.3 106.9)
+		(end 121 106.9)
 		(width 0.25)
 		(layer "F.Cu")
 		(net "+3V3")
-		(uuid "d0000043-0000-0000-0000-000000000001")
+		(uuid "d0000053-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 121 109)
-		(end 130 102)
+		(start 121 106.9)
+		(end 121 110)
 		(width 0.25)
 		(layer "F.Cu")
 		(net "+3V3")
-		(uuid "d0000044-0000-0000-0000-000000000001")
+		(uuid "d0000054-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 130 102)
-		(end 132.7 108.095)
+		(start 121 110)
+		(end 132 110)
 		(width 0.25)
 		(layer "F.Cu")
 		(net "+3V3")
-		(uuid "d0000045-0000-0000-0000-000000000001")
+		(uuid "d0000055-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 102 107.46)
-		(end 108 109)
+		(start 132 110)
+		(end 132 110)
 		(width 0.25)
 		(layer "F.Cu")
-		(net "GND")
-		(uuid "d0000046-0000-0000-0000-000000000001")
+		(net "+3V3")
+		(uuid "d0000056-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 108 109)
-		(end 112.7 106.9)
+		(start 132 110)
+		(end 135.7 110)
 		(width 0.25)
 		(layer "F.Cu")
-		(net "GND")
-		(uuid "d0000047-0000-0000-0000-000000000001")
+		(net "+3V3")
+		(uuid "d0000057-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 102 112.54)
-		(end 130 113.905)
+		(start 135.7 110)
+		(end 135.7 118.905)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "+3V3")
+		(uuid "d0000058-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 97 112.54)
+		(end 97 141)
 		(width 0.25)
 		(layer "B.Cu")
 		(net "GND")
-		(uuid "d0000048-0000-0000-0000-000000000001")
+		(uuid "d0000059-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 130 113.905)
-		(end 145 113)
+		(start 106 110)
+		(end 106 141)
 		(width 0.25)
 		(layer "B.Cu")
 		(net "GND")
-		(uuid "d0000049-0000-0000-0000-000000000001")
+		(uuid "d000005a-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 110.7 106.9)
+		(end 110.7 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d000005b-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 113 113.1)
+		(end 113 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d000005c-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 123 110)
+		(end 123 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d000005d-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 134 110)
+		(end 134 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d000005e-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 130.3 118.905)
+		(end 130.3 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d000005f-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 145.5 120)
+		(end 145.5 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d0000060-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 154 124)
+		(end 154 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d0000061-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 163 119.54)
+		(end 163 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d0000062-0000-0000-0000-000000000001")
+	)
+	(segment
+		(start 97 141)
+		(end 163 141)
+		(width 0.25)
+		(layer "B.Cu")
+		(net "GND")
+		(uuid "d0000063-0000-0000-0000-000000000001")
 	)
 	(embedded_fonts no)
 )
