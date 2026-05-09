@@ -860,8 +860,13 @@ function setupSwipe() {
   }
 
   // Drag events on the entire swp view (controls bar + image body)
-  // so the handle in the controls bar is also draggable.
-  swpView.addEventListener('mousedown', e => { dragging = true; onMove(e.clientX); });
+  // so the handle in the controls bar is also draggable. Filter to the
+  // primary (left) button so the right-click drag pan doesn't also move
+  // the swipe divider — those gestures are intentionally orthogonal.
+  swpView.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    dragging = true; onMove(e.clientX);
+  });
   document.addEventListener('mousemove', e => { if (dragging) { e.preventDefault(); onMove(e.clientX); } });
   document.addEventListener('mouseup', () => dragging = false);
   swpView.addEventListener('touchstart', e => { dragging = true; onMove(e.touches[0].clientX); });

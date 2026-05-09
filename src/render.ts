@@ -831,7 +831,34 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     }
 
     if (isWorkingTree(ref)) {
-      await renderFromSource(filePath);
+      // kicad-cli writes/updates a sibling .kicad_prl every time it touches
+      // a .kicad_pcb / .kicad_sch — even when we're rendering a working-tree
+      // file in place. Snapshot it first and restore (or delete) afterwards
+      // so the user's repo stays clean. This matters especially for the
+      // post-edit hook flow, where every save would otherwise dirty the
+      // project file.
+      let prlSnap: { path: string; existed: boolean; content: Buffer | null } | null = null;
+      if (fileType === "pcb" || fileType === "sch") {
+        const ext = path.extname(filePath);
+        const stem = filePath.slice(0, -ext.length);
+        const prl = stem + ".kicad_prl";
+        prlSnap = {
+          path: prl,
+          existed: fs.existsSync(prl),
+          content: fs.existsSync(prl) ? fs.readFileSync(prl) : null,
+        };
+      }
+      try {
+        await renderFromSource(filePath);
+      } finally {
+        if (prlSnap) {
+          if (prlSnap.existed && prlSnap.content) {
+            try { fs.writeFileSync(prlSnap.path, prlSnap.content); } catch { /* ignore */ }
+          } else if (fs.existsSync(prlSnap.path)) {
+            try { fs.unlinkSync(prlSnap.path); } catch { /* ignore */ }
+          }
+        }
+      }
     } else {
       // We already have content in memory — write to temp without a second
       // git invocation.
@@ -1134,6 +1161,32 @@ export function resolveInputs(
         if (fs.existsSync(pcbCandidate)) pcb = pcbCandidate;
         if (fs.existsSync(schCandidate)) sch = schCandidate;
         scanProjectSiblings(abs, projBase);
+      }
+      // Library-only directories (no pcb/sch, just .kicad_sym or .pretty/)
+      // are still valid inputs — the user might be diffing a symbol library
+      // or a footprint library directory directly. Pick those up regardless
+      // of projBase, but respect any scope filter.
+      if (scope === undefined || scope === "sym") {
+        for (const f of entries) {
+          if (f.endsWith(".kicad_sym") && !f.startsWith("preview_")) {
+            const p = path.join(abs, f);
+            if (!syms.includes(p)) syms.push(p);
+          }
+        }
+      }
+      if (scope === undefined || scope === "fp") {
+        for (const f of entries) {
+          if (f.endsWith(".pretty")) {
+            const pretty = path.join(abs, f);
+            if (fs.statSync(pretty).isDirectory()) {
+              for (const m of fs.readdirSync(pretty).sort()) {
+                if (m.endsWith(".kicad_mod") && !m.startsWith("preview_")) {
+                  fps.push(path.join(pretty, m));
+                }
+              }
+            }
+          }
+        }
       }
     }
   } else if (abs.endsWith(".kicad_pro")) {
