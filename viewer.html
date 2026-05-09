@@ -188,7 +188,10 @@ const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 
 // --- State ---
-let currentView = 'sbs';
+// Default view is overlay when there's a before-state (most useful for
+// spotting changes); falls back to side-by-side for new files where overlay
+// is meaningless. Updated per-file in rebuildForCurrentFile().
+let currentView = 'ovl';
 let layerVisible = {};  // layer name -> bool (eye icon toggle)
 let activeLayer = null; // selected layer name (gets z-index boost to top)
 let showDiff = true;  // default ON — diffs are the primary use case
@@ -219,7 +222,9 @@ function rebuildForCurrentFile() {
   activeLayer = null;
   showDiff = true;
   swipePct = 50;
-  currentView = 'sbs';
+  // Overlay is the default whenever a before-state exists (most useful for
+  // spotting changes); side-by-side is the only option for new files.
+  currentView = M.hasBefore ? 'ovl' : 'sbs';
   currentPage = 0;
 
   $('#title').textContent = M.file;
@@ -241,7 +246,7 @@ function rebuildForCurrentFile() {
   buildTabs();
   buildLayerPanel();
   buildViews();
-  setView('sbs');
+  setView(currentView);
   // applyDiff after buildViews creates the diff overlay images
   applyDiff();
 }
@@ -333,8 +338,12 @@ window.addEventListener('hashchange', () => {
 
 function buildTabs() {
   const tabs = $('#view-tabs');
-  const modes = [['sbs','Side by Side']];
-  if (M.hasBefore) modes.push(['ovl','Overlay'],['swp','Swipe']);
+  // Overlay is the default and goes leftmost when a before-state exists —
+  // it's the most commonly useful comparison mode for spotting changes.
+  // Side-by-side has no before requirement so it's the only mode for new files.
+  const modes = M.hasBefore
+    ? [['ovl','Overlay'],['sbs','Side by Side'],['swp','Swipe']]
+    : [['sbs','Side by Side']];
   modes.forEach(([id, label]) => {
     const btn = document.createElement('button');
     btn.textContent = label;

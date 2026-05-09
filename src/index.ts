@@ -13,7 +13,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { renderProject, printSummary, resolveInputs } from "./render.ts";
+import { renderProject, printProjectSummary, resolveInputs } from "./render.ts";
+import type { LogLevel } from "./render.ts";
 import { textDiff } from "./textdiff.ts";
 import type { FileType } from "./types.ts";
 
@@ -58,6 +59,9 @@ Options:
   --images-only          Skip HTML generation and auto-open
   --text                 Also print a structural text diff to stdout
   --text-only            Print only the text diff (no SVG/PNG/HTML rendering — fast)
+  -v, --verbose, --debug Show every PNG path in the summary (default: only HTML path)
+  -q, --quiet            Suppress the summary entirely
+  --log <level>          Set summary log level: quiet | info | debug (default: info)
   --open                 Open diff HTML with xdg-open after rendering
   --open vscode|code     Open in VSCode tab (\`code -r\`)
   --open firefox|...     Open in named browser (firefox, chromium, chrome, etc.)
@@ -95,6 +99,9 @@ interface ParsedArgs {
   text?: boolean;
   /** Skip HTML/image rendering — only print the text diff. */
   textOnly?: boolean;
+  /** Log level for stdout summary. Default "info". "debug" surfaces every PNG
+   *  path; "quiet" suppresses the summary entirely. */
+  logLevel?: LogLevel;
   scope?: FileType;
   open?: string;
 }
@@ -168,6 +175,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let imagesOnly = false;
   let text = false;
   let textOnly = false;
+  let logLevel: LogLevel | undefined;
   let open: string | undefined;
 
   for (; i < argv.length; i++) {
@@ -199,6 +207,17 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === "--text-only") {
       textOnly = true;
       text = true;
+    } else if (arg === "--verbose" || arg === "-v" || arg === "--debug") {
+      logLevel = "debug";
+    } else if (arg === "--quiet" || arg === "-q") {
+      logLevel = "quiet";
+    } else if (arg === "--log") {
+      if (i + 1 >= argv.length) throw new Error("--log requires a value");
+      const v = argv[++i];
+      if (v !== "quiet" && v !== "info" && v !== "debug") {
+        throw new Error(`invalid --log level: ${v} (expected quiet, info, or debug)`);
+      }
+      logLevel = v;
     } else if (arg === "--open" || arg.startsWith("--open=")) {
       let target: string | undefined;
       if (arg.startsWith("--open=")) {
@@ -296,7 +315,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  return { input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly, scope, open };
+  return {
+    input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly, logLevel, scope, open,
+  };
 }
 
 async function main(): Promise<void> {
@@ -330,11 +351,9 @@ async function main(): Promise<void> {
       open: parsed.open,
       scope: parsed.scope,
     });
-    for (const r of project.results) {
-      printSummary(r, !!parsed.imagesOnly);
-    }
+    printProjectSummary(project, !!parsed.imagesOnly, parsed.logLevel ?? "info");
     if (parsed.text) {
-      console.log("");
+      if ((parsed.logLevel ?? "info") !== "quiet") console.log("");
       printTextDiff(parsed);
     }
   } catch (e) {

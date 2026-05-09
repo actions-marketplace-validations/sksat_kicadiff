@@ -934,25 +934,54 @@ function buildHtmlFromProject(manifest: ProjectManifest): string {
   return `<script>window.MANIFEST = ${json};</script>\n${readViewerHtml()}`;
 }
 
-/** Print a human-readable summary, used by the CLI / Claude Code hook. */
-export function printSummary(r: RenderResult, imagesOnly: boolean): void {
+export type LogLevel = "quiet" | "info" | "debug";
+
+/** Print a project-level summary. At "info" (default) we only show the
+ *  per-file rendered line and a single combined HTML path; PNG paths are
+ *  emitted only at "debug". `imagesOnly` mode prints just the output dir at
+ *  info, full per-file PNG paths at debug. */
+export function printProjectSummary(
+  project: ProjectRenderResult,
+  imagesOnly: boolean,
+  logLevel: LogLevel = "info",
+): void {
+  if (logLevel === "quiet") return;
+
+  const showPaths = logLevel === "debug";
+
   if (imagesOnly) {
-    console.log(`Images updated: ${r.outputDir}`);
-    console.log(`  After:  ${r.afterPng}`);
-    if (r.beforePng) console.log(`  Before: ${r.beforePng}`);
-    if (r.diffPng) console.log(`  Diff:   ${r.diffPng}`);
+    // images-only mode: the PNG paths are the headline output, but at info
+    // level a single output dir line is enough
+    if (showPaths) {
+      for (const r of project.results) {
+        console.log(`Images: ${r.relPath}`);
+        console.log(`  After:  ${r.afterPng}`);
+        if (r.beforePng) console.log(`  Before: ${r.beforePng}`);
+        if (r.diffPng) console.log(`  Diff:   ${r.diffPng}`);
+      }
+    } else if (project.results[0]) {
+      console.log(`Images updated: ${project.results[0].outputDir}`);
+    }
     return;
   }
-  console.log(`KiCad preview rendered: ${r.relPath}`);
-  console.log(`  After:  ${r.afterPng}`);
-  if (r.beforePng) {
-    console.log(`  Before: ${r.beforePng}`);
-    console.log("");
-    console.log("Read both PNG files to visually compare the before/after state of your edit.");
-    if (r.diffHtml) console.log(`Diff HTML: ${r.diffHtml} (open with Live Preview in VSCode)`);
-  } else {
-    console.log("  (New file — no before state in git)");
-    console.log("");
-    console.log("Read the PNG file to verify the visual result of your edit.");
+
+  // Normal mode — per-file rendered line, optional PNG details, single HTML
+  for (const r of project.results) {
+    const tag = r.beforePng ? "" : " (new file — no before state in git)";
+    console.log(`Rendered: ${r.relPath}${tag}`);
+    if (showPaths) {
+      console.log(`  After:  ${r.afterPng}`);
+      if (r.beforePng) console.log(`  Before: ${r.beforePng}`);
+      if (r.diffPng) console.log(`  Diff:   ${r.diffPng}`);
+    }
   }
+
+  // Combined HTML (deduplicated — multiple results in project mode share it)
+  const html = project.combinedHtml ?? project.results[0]?.diffHtml;
+  if (html) console.log(`Diff HTML: ${html} (open with Live Preview in VSCode)`);
+}
+
+/** @deprecated kept for older callers; prefer printProjectSummary. */
+export function printSummary(r: RenderResult, imagesOnly: boolean, logLevel: LogLevel = "info"): void {
+  printProjectSummary({ results: [r] }, imagesOnly, logLevel);
 }

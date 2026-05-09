@@ -13,7 +13,8 @@ test.skip(() => !fs.existsSync(SCH_HTML), "schematic fixture not found");
 
 test.beforeEach(async ({ page }) => {
   await page.goto(`file://${SCH_HTML}`);
-  await page.waitForSelector("#view-sbs.active");
+  // Overlay is the default view when before exists; sch fixture has before
+  await page.waitForSelector("#view-ovl.active");
 });
 
 test.describe("Schematic viewer", () => {

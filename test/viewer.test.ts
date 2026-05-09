@@ -14,8 +14,8 @@ test.skip(() => !fs.existsSync(DIFF_HTML), "fixture not found");
 
 test.beforeEach(async ({ page }) => {
   await page.goto(`file://${DIFF_HTML}`);
-  // Wait for init() to complete
-  await page.waitForSelector("#view-sbs.active");
+  // Wait for init() to complete — overlay is the default view when before exists
+  await page.waitForSelector("#view-ovl.active");
 });
 
 // =============================================================================
@@ -23,29 +23,29 @@ test.beforeEach(async ({ page }) => {
 // =============================================================================
 
 test.describe("View modes", () => {
-  test("initial state is Side by Side", async ({ page }) => {
-    await expect(page.locator("#view-sbs")).toHaveClass(/active/);
-    await expect(page.locator("#view-ovl")).not.toHaveClass(/active/);
+  test("initial state is Overlay (when before exists)", async ({ page }) => {
+    await expect(page.locator("#view-ovl")).toHaveClass(/active/);
+    await expect(page.locator("#view-sbs")).not.toHaveClass(/active/);
     await expect(page.locator("#view-swp")).not.toHaveClass(/active/);
   });
 
-  test("switch to Overlay", async ({ page }) => {
-    await page.click('button[data-view="ovl"]');
-    await expect(page.locator("#view-ovl")).toHaveClass(/active/);
-    await expect(page.locator("#view-sbs")).not.toHaveClass(/active/);
+  test("switch to Side by Side", async ({ page }) => {
+    await page.click('button[data-view="sbs"]');
+    await expect(page.locator("#view-sbs")).toHaveClass(/active/);
+    await expect(page.locator("#view-ovl")).not.toHaveClass(/active/);
   });
 
   test("switch to Swipe", async ({ page }) => {
     await page.click('button[data-view="swp"]');
     await expect(page.locator("#view-swp")).toHaveClass(/active/);
-    await expect(page.locator("#view-sbs")).not.toHaveClass(/active/);
+    await expect(page.locator("#view-ovl")).not.toHaveClass(/active/);
   });
 
-  test("all three tabs exist for PCB with before", async ({ page }) => {
+  test("Overlay is leftmost when before exists", async ({ page }) => {
     const tabs = page.locator("#view-tabs button");
     await expect(tabs).toHaveCount(3);
-    await expect(tabs.nth(0)).toHaveText("Side by Side");
-    await expect(tabs.nth(1)).toHaveText("Overlay");
+    await expect(tabs.nth(0)).toHaveText("Overlay");
+    await expect(tabs.nth(1)).toHaveText("Side by Side");
     await expect(tabs.nth(2)).toHaveText("Swipe");
   });
 });
@@ -263,6 +263,8 @@ test.describe("Resize", () => {
   test("side-by-side images fit within viewport on resize", async ({
     page,
   }) => {
+    // Side-by-side is no longer the default; switch to it so its layout runs.
+    await page.click('button[data-view="sbs"]');
     await page.setViewportSize({ width: 600, height: 400 });
     await page.waitForTimeout(100);
 
@@ -297,6 +299,9 @@ test.describe("Resize", () => {
   test("side-by-side vertical scroll is synchronized between panes", async ({
     page,
   }) => {
+    // Side-by-side is no longer the default — switch to it explicitly so the
+    // panes are display:flex and scroll events fire as expected.
+    await page.click('button[data-view="sbs"]');
     // Small viewport so tall PCB images overflow vertically
     await page.setViewportSize({ width: 400, height: 300 });
     await page.waitForTimeout(200);
@@ -319,6 +324,7 @@ test.describe("Resize", () => {
   test("side-by-side scroll sync works in reverse direction", async ({
     page,
   }) => {
+    await page.click('button[data-view="sbs"]');
     await page.setViewportSize({ width: 400, height: 300 });
     await page.waitForTimeout(200);
 
