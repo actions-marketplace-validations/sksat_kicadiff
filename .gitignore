@@ -4,6 +4,9 @@ test-results/
 dist/
 src/viewer-content.ts
 
+# kicadiff renders by default into <repo>/.claude/preview/.
+.claude/preview/
+
 # KiCad runtime artifacts (per-user state, lock files, autosave/backup
 # directories — all regenerated as KiCad opens / works on the project).
 *.kicad_prl
