@@ -20,11 +20,17 @@ file in your browser, or as a markdown report you can paste into a PR.
 
 ## Requirements
 
+The end-goal is for `kicad-cli` to be the only runtime dependency.
+We're not there yet — `rsvg-convert` and ImageMagick are still
+needed transiently. Tracked in `DESIGN.md` (Runtime dependencies).
+
 - [`kicad-cli`](https://www.kicad.org/) 9.x or later (rendering engine)
-- `rsvg-convert` (SVG → PNG)
-- `imagemagick` (`magick compare` is used for the highlight overlay; optional)
-- Node 25+ — runs the TypeScript CLI directly from its shebang. No
-  transpile step.
+- `rsvg-convert` from `librsvg` (SVG → PNG; transient — to be replaced
+  by an in-process WASM rasterizer)
+- ImageMagick `magick` command (highlight overlay; optional, transient)
+- [Bun](https://bun.sh) — runs the TypeScript CLI directly via shebang.
+  Bun is also what compiles the standalone binary, so no separate Node
+  install is needed for any workflow.
 
 ## Usage
 

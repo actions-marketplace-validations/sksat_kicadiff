@@ -14,6 +14,31 @@ vs 作業ツリーなど) の差分を、人間が視覚的に確認できる形
 - Claude Code の PostToolUse hook から呼べるように、CLI として安定
   したインターフェイスを提供する
 
+## ランタイム依存の縮約
+
+最終的にエンドユーザーが `kicad-cli` だけ持っていれば動く状態を
+目指している。理由は次のとおり:
+
+- KiCad ファイルを実際に解釈・描画するのは kicad-cli の責務であり、
+  これは外部に出せない (KiCad 本体の機能に依存)。
+- 一方 `rsvg-convert` / ImageMagick は SVG ラスタライズと画像比較
+  という汎用処理であり、ライブラリで置換可能。
+- standalone バイナリを `bun build --compile` で配布する想定なので、
+  ランタイムには Bun も Node も入れなくて済む。kicad-cli さえあれば
+  OK、という体験にしたい。
+
+現状の依存と置換計画:
+
+| 依存             | 置換                                       | 状態   |
+|------------------|---------------------------------------------|--------|
+| kicad-cli        | (置換しない)                               | 維持   |
+| Bun              | `bun build --compile` で binary に内包      | OK     |
+| `rsvg-convert`   | `@resvg/resvg-wasm` 等の in-process WASM   | TODO   |
+| `magick compare` | `pixelmatch` + `pngjs` の純 JS 比較        | TODO   |
+
+WASM ラスタライザに置換すると Bun の `--compile` でバイナリ内に
+完全に取り込めるので、配布 binary 1 つだけで動く構成になる。
+
 ## アーキテクチャ概観
 
 ```
@@ -34,6 +59,133 @@ content を取り出し │ (~/.cache/kicadiff/<hash>/)    │       ↓
 レンダリングは外部ツール (kicad-cli, rsvg-convert, optionally
 ImageMagick) に丸投げし、kicadiff は orchestration とキャッシュと
 出力フォーマットの統合を担当する。
+
+## 出力フォーマット
+
+| flag             | HTML | 画像 | Markdown | Text |
+|------------------|------|------|----------|------|
+| (なし)           | ✓    | ✓    |          |      |
+| `--md`           |      | ✓    | ✓        |      |
+| `--text`         | ✓    | ✓    |          | ✓    |
+| `--text-only`    |      |      |          | ✓    |
+| `--images-only`  |      | ✓    |          |      |
+
+### Markdown レポート
+
+`--md` 時は HTML を作らず markdown ファイル (`<safe>_diff.md`) を
+書く。中身は file ごとに「heading + side-by-side 画像テーブル + 構造
+差分」。画像パスは markdown ファイルの dir に対する相対なので、
+ファイルを移動 / コピーしても link が壊れない。
+
+`--output -` または `--output stdout` で stdout に出力。このとき
+ステータスログは stderr に流す (リダイレクトでファイルが汚れない
+ため)。
+
+### 構造的なテキスト / Markdown 差分
+
+`textdiff.ts` が S-expression を最小限パースし、`(footprint ...)` /
+`(symbol ...)` ブロックを抽出して reference designator を identity
+として diff する。出力例:
+
+```
+foo.kicad_pcb (pcb): +0 -0 ~3 =42
+  ~ R1  value: 330 → 470
+  ~ C5  value: 100nF → 220nF
+  ~ U1  pos: 100.00,50.00 → 105.00,50.00
+```
+
+`+` 追加、`-` 削除、`~` 変更、`=` 変更なし。markdown 版はこれを
+`### Added` / `### Removed` / `### Changed` のリストとして整形する。
+
+## CLI 引数の解析
+
+`git diff` 互換のために単純な flag-only パーサーは使わず、自前で
+positional argument を分類する:
+
+- 識別: subcommand (`pcb` 等) → scope を限定
+- 識別: `--from` / `--to` / `--output` などの flag
+- 残りの positional から `isLikelyInput()` で input を逆引き
+  (拡張子 / `/` の有無で判定)
+- 残りの positional は ref と見做し、`<r1>..<r2>` 記法を expand
+- ref は `git rev-parse --verify` で先に validate
+
+`--` separator で input と ref を明示分離することも可能 (git と同じ)。
+
+## ビューア (`viewer.html`)
+
+意図的に 1 ファイル。HTML / CSS / JS を全部内包する。
+`scripts/embed-viewer.mjs` がビルド時に `src/viewer-content.ts` に
+inline 文字列として注入し、Bun コンパイル後のバイナリにも入る。
+
+### 表示モード
+
+| Mode         | 説明                                            | before 必要? |
+|--------------|------------------------------------------------|--------------|
+| Overlay      | before と after を重ね、opacity slider でブレンド | ◯ (デフォルト) |
+| Side by Side | 横に並べて表示。スクロール同期                  | (after 単体可) |
+| Swipe        | divider の clip-path で before/after を切替    | ◯           |
+
+before がないときは Side by Side が自動選択され、Overlay / Swipe は
+controls bar / divider を出さず after 1 枚を表示する。
+
+### Zoom と Pan
+
+- Wheel: cursor 位置を支点に zoom (CAD ツールと同じセマンティクス)
+- 右クリックドラッグ: pan (左クリックは layer row / divider などの
+  UI 操作のため温存)
+- スクロールバー: 通常通り pan として機能
+
+zoom は CSS variable (`--zoom`) として root に設定し、layer-stack /
+compare-wrap の width が `calc(var(--zoom,1) * 100%)` で連動する。
+これにより content の layout box が拡大し、scrollbar が自然に出る。
+`transform: scale()` を使わないのは、scrollWidth が transformed size
+を反映しないため pan が壊れるから。
+
+### 差分マーカー
+
+- file タブ: `FileManifest.hasDiff === true` のとき琥珀色
+- page タブ: `SchPage.hasDiff === true` のとき琥珀色
+- diff overlay (赤いハイライト): pulse animation で目に留まる、デフォルト
+  ON (チェックボックスでオフ可)
+
+## マニフェスト
+
+ビューアに渡す JSON。HTML 内に
+`<script>window.MANIFEST = {...}</script>` として inline される。
+
+```ts
+ProjectManifest {
+  files: FileManifest[];
+}
+
+FileManifest {
+  file: string;          // repo-relative path
+  type: "pcb" | "sch" | "sym" | "fp";
+  hasBefore: boolean;
+  hasDiff?: boolean;     // before/after combined PNG が byte 単位で違うか
+  fromRef?: string;      // 比較元の ref (default: "HEAD")
+  toRef?: string;        // 比較先の ref ("" = working tree)
+  after: SideManifest;
+  before?: SideManifest; // hasBefore のときのみ
+  diff?: string;         // 差分ハイライト PNG (ImageMagick の出力)
+}
+
+SideManifest {
+  combined: string;            // 主画像
+  layers?: Record<string, string>;  // pcb のみ
+  pages?: SchPage[];           // sch / sym / fp
+}
+
+SchPage {
+  name: string;
+  png: string;
+  hasDiff?: boolean;     // before/after の同名 page で PNG が違うか
+}
+```
+
+`hasDiff` は **テキストの差異ではなく視覚的な差異** を表す。例えば
+PCB の silkscreen に出ない property の値だけ変わっても hasDiff=false
+になる。これにより「diff ありますよ」マーカーがノイズで光らない。
 
 ## 4 つのファイル型
 
@@ -166,130 +318,3 @@ cache hit 時は `combined.png` を `<sideDir>/<safe>.png` に、`extras/`
 
 cache miss 時はレンダリング → 結果をキャッシュへ書き戻す (best-effort、
 失敗しても render 自体は成功扱い)。
-
-## マニフェスト
-
-ビューアに渡す JSON。HTML 内に
-`<script>window.MANIFEST = {...}</script>` として inline される。
-
-```ts
-ProjectManifest {
-  files: FileManifest[];
-}
-
-FileManifest {
-  file: string;          // repo-relative path
-  type: "pcb" | "sch" | "sym" | "fp";
-  hasBefore: boolean;
-  hasDiff?: boolean;     // before/after combined PNG が byte 単位で違うか
-  fromRef?: string;      // 比較元の ref (default: "HEAD")
-  toRef?: string;        // 比較先の ref ("" = working tree)
-  after: SideManifest;
-  before?: SideManifest; // hasBefore のときのみ
-  diff?: string;         // 差分ハイライト PNG (ImageMagick の出力)
-}
-
-SideManifest {
-  combined: string;            // 主画像
-  layers?: Record<string, string>;  // pcb のみ
-  pages?: SchPage[];           // sch / sym / fp
-}
-
-SchPage {
-  name: string;
-  png: string;
-  hasDiff?: boolean;     // before/after の同名 page で PNG が違うか
-}
-```
-
-`hasDiff` は **テキストの差異ではなく視覚的な差異** を表す。例えば
-PCB の silkscreen に出ない property の値だけ変わっても hasDiff=false
-になる。これにより「diff ありますよ」マーカーがノイズで光らない。
-
-## ビューア (`viewer.html`)
-
-意図的に 1 ファイル。HTML / CSS / JS を全部内包する。
-`scripts/embed-viewer.mjs` がビルド時に `src/viewer-content.ts` に
-inline 文字列として注入し、Bun コンパイル後のバイナリにも入る。
-
-### 表示モード
-
-| Mode         | 説明                                            | before 必要? |
-|--------------|------------------------------------------------|--------------|
-| Overlay      | before と after を重ね、opacity slider でブレンド | ◯ (デフォルト) |
-| Side by Side | 横に並べて表示。スクロール同期                  | (after 単体可) |
-| Swipe        | divider の clip-path で before/after を切替    | ◯           |
-
-before がないときは Side by Side が自動選択され、Overlay / Swipe は
-controls bar / divider を出さず after 1 枚を表示する。
-
-### Zoom と Pan
-
-- Wheel: cursor 位置を支点に zoom (CAD ツールと同じセマンティクス)
-- 右クリックドラッグ: pan (左クリックは layer row / divider などの
-  UI 操作のため温存)
-- スクロールバー: 通常通り pan として機能
-
-zoom は CSS variable (`--zoom`) として root に設定し、layer-stack /
-compare-wrap の width が `calc(var(--zoom,1) * 100%)` で連動する。
-これにより content の layout box が拡大し、scrollbar が自然に出る。
-`transform: scale()` を使わないのは、scrollWidth が transformed size
-を反映しないため pan が壊れるから。
-
-### 差分マーカー
-
-- file タブ: `FileManifest.hasDiff === true` のとき琥珀色
-- page タブ: `SchPage.hasDiff === true` のとき琥珀色
-- diff overlay (赤いハイライト): pulse animation で目に留まる、デフォルト
-  ON (チェックボックスでオフ可)
-
-## 出力フォーマット
-
-| flag             | HTML | 画像 | Markdown | Text |
-|------------------|------|------|----------|------|
-| (なし)           | ✓    | ✓    |          |      |
-| `--md`           |      | ✓    | ✓        |      |
-| `--text`         | ✓    | ✓    |          | ✓    |
-| `--text-only`    |      |      |          | ✓    |
-| `--images-only`  |      | ✓    |          |      |
-
-### Markdown レポート
-
-`--md` 時は HTML を作らず markdown ファイル (`<safe>_diff.md`) を
-書く。中身は file ごとに「heading + side-by-side 画像テーブル + 構造
-差分」。画像パスは markdown ファイルの dir に対する相対なので、
-ファイルを移動 / コピーしても link が壊れない。
-
-`--output -` または `--output stdout` で stdout に出力。このとき
-ステータスログは stderr に流す (リダイレクトでファイルが汚れない
-ため)。
-
-### 構造的なテキスト / Markdown 差分
-
-`textdiff.ts` が S-expression を最小限パースし、`(footprint ...)` /
-`(symbol ...)` ブロックを抽出して reference designator を identity
-として diff する。出力例:
-
-```
-foo.kicad_pcb (pcb): +0 -0 ~3 =42
-  ~ R1  value: 330 → 470
-  ~ C5  value: 100nF → 220nF
-  ~ U1  pos: 100.00,50.00 → 105.00,50.00
-```
-
-`+` 追加、`-` 削除、`~` 変更、`=` 変更なし。markdown 版はこれを
-`### Added` / `### Removed` / `### Changed` のリストとして整形する。
-
-## CLI 引数の解析
-
-`git diff` 互換のために単純な flag-only パーサーは使わず、自前で
-positional argument を分類する:
-
-- 識別: subcommand (`pcb` 等) → scope を限定
-- 識別: `--from` / `--to` / `--output` などの flag
-- 残りの positional から `isLikelyInput()` で input を逆引き
-  (拡張子 / `/` の有無で判定)
-- 残りの positional は ref と見做し、`<r1>..<r2>` 記法を expand
-- ref は `git rev-parse --verify` で先に validate
-
-`--` separator で input と ref を明示分離することも可能 (git と同じ)。

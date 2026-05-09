@@ -21,11 +21,17 @@ KiCad プロジェクト用の visual diff ツール。`.kicad_pcb` /
 
 ## 必要なもの
 
+最終的には `kicad-cli` だけをランタイム依存にしたい。現状はまだ
+`rsvg-convert` / ImageMagick も transient な依存として必要 (`DESIGN.md`
+の「ランタイム依存の縮約」を参照)。
+
 - [`kicad-cli`](https://www.kicad.org/) 9.x 以降 (レンダリングエンジン)
-- `rsvg-convert` (SVG → PNG)
-- `imagemagick` (差分ハイライトに `magick compare` を使う; optional)
-- Node 25+ — shebang から TypeScript の CLI を直接実行する。
-  transpile 不要。
+- `librsvg` パッケージの `rsvg-convert` コマンド (SVG → PNG;
+  in-process な WASM ラスタライザに置換予定)
+- ImageMagick の `magick` コマンド (差分ハイライト; optional, 置換予定)
+- [Bun](https://bun.sh) — shebang から TypeScript の CLI を直接実行する。
+  standalone binary をコンパイルするのも Bun なので、Node を別途用意
+  する必要はない。
 
 ## 使い方
 
