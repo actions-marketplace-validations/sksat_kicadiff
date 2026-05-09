@@ -4,6 +4,12 @@ test-results/
 dist/
 src/viewer-content.ts
 
+# API keys / secrets for gemini-cli (don't commit alongside settings.json).
+.gemini/.env
+
+# Claude Code runtime artifacts under .claude/ (scheduled task locks etc.)
+.claude/scheduled_tasks.lock
+
 # kicadiff renders by default into <repo>/.claude/preview/.
 .claude/preview/
 
