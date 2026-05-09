@@ -9,10 +9,12 @@ export type FileType = "pcb" | "sch" | "sym" | "fp";
  *  `name` is the page identifier extracted from the SVG filename — for the root
  *  sheet it is the project basename; for subsheets it is the suffix after the
  *  project basename and `-`. `hasDiff` is set on the after-side entry only,
- *  computed by comparing before/after PNG bytes for the same page name. */
+ *  computed by comparing before/after PNG bytes for the same page name.
+ *  `image` is the rendered SVG path served to the viewer (so users can zoom
+ *  in indefinitely without rasterisation artefacts). */
 export interface SchPage {
   name: string;
-  png: string;
+  image: string;
   hasDiff?: boolean;
 }
 

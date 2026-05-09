@@ -268,8 +268,11 @@ function extrasDirName(fileType: FileType, safe: string): string {
   return `items_${safe}`; // sym, fp
 }
 
-/** Try to populate `<sideDir>/<safe>.png` and the type-specific extras dir
- *  from a cached render. Returns true on cache hit, false on miss. */
+/** Try to populate `<sideDir>/<safe>.{png,svg}` and the type-specific extras
+ *  dir from a cached render. Returns true on cache hit, false on miss.
+ *
+ *  Both the PNG and the SVG must be cached for a hit — older cache entries
+ *  (PNG-only) miss so the SVG manifest target gets repopulated. */
 function loadFromCache(
   hash: string,
   sideDir: string,
@@ -277,11 +280,12 @@ function loadFromCache(
   fileType: FileType,
 ): boolean {
   const cacheDir = cachePathFor(hash);
-  const cachedCombined = path.join(cacheDir, "combined.png");
-  if (!fs.existsSync(cachedCombined)) return false;
+  const cachedPng = path.join(cacheDir, "combined.png");
+  const cachedSvg = path.join(cacheDir, "combined.svg");
+  if (!fs.existsSync(cachedPng) || !fs.existsSync(cachedSvg)) return false;
   fs.mkdirSync(sideDir, { recursive: true });
-  const targetPng = path.join(sideDir, `${safe}.png`);
-  fs.copyFileSync(cachedCombined, targetPng);
+  fs.copyFileSync(cachedPng, path.join(sideDir, `${safe}.png`));
+  fs.copyFileSync(cachedSvg, path.join(sideDir, `${safe}.svg`));
   const cachedExtras = path.join(cacheDir, "extras");
   if (fs.existsSync(cachedExtras)) {
     const targetExtras = path.join(sideDir, extrasDirName(fileType, safe));
@@ -299,11 +303,15 @@ function saveToCache(
   fileType: FileType,
 ): void {
   const targetPng = path.join(sideDir, `${safe}.png`);
+  const targetSvg = path.join(sideDir, `${safe}.svg`);
   if (!fs.existsSync(targetPng)) return;
   const cacheDir = cachePathFor(hash);
   try {
     fs.mkdirSync(cacheDir, { recursive: true });
     fs.copyFileSync(targetPng, path.join(cacheDir, "combined.png"));
+    if (fs.existsSync(targetSvg)) {
+      fs.copyFileSync(targetSvg, path.join(cacheDir, "combined.svg"));
+    }
     const extrasSrc = path.join(sideDir, extrasDirName(fileType, safe));
     if (fs.existsSync(extrasSrc)) {
       fs.cpSync(extrasSrc, path.join(cacheDir, "extras"), { recursive: true });
@@ -392,7 +400,7 @@ async function renderSch(
   rootPng: string,
   pagesDir: string,
   rootName: string,
-): Promise<{ name: string; png: string }[]> {
+): Promise<{ name: string; image: string }[]> {
   fs.mkdirSync(sideDir, { recursive: true });
   fs.mkdirSync(pagesDir, { recursive: true });
   // Export all sheets to pagesDir so they don't collide with PCB outputs
@@ -419,15 +427,17 @@ async function renderSch(
   // Map kicad-cli output names → stable page names. The root page uses the
   // caller-provided `rootName` (the project basename) so before/after sides
   // produce identically-named pages even when the before-side rendered from
-  // a temp file with a different basename.
-  const pages: { name: string; svg: string; png: string }[] = svgFiles.map(f => {
+  // a temp file with a different basename. We also record the *stable* SVG
+  // path (renamed below) since that is what the manifest references.
+  const pages: { name: string; rawSvg: string; svg: string; png: string }[] = svgFiles.map(f => {
     const stem = f.slice(0, -".svg".length);
     const name = stem === inputBaseName
       ? rootName
       : stem.slice(inputBaseName.length + 1);
     return {
       name,
-      svg: path.join(pagesDir, f),
+      rawSvg: path.join(pagesDir, f),
+      svg: path.join(pagesDir, `${name}.svg`),
       png: path.join(pagesDir, `${name}.png`),
     };
   });
@@ -438,17 +448,30 @@ async function renderSch(
     return a.name.localeCompare(b.name);
   });
 
-  // Convert SVGs to PNG in parallel. The page name (not the SVG basename) is
-  // used for the PNG so the file structure mirrors the manifest.
+  // Rename each kicad-cli SVG to its stable page name. We use rename rather
+  // than copy + delete so the result is atomic and we don't briefly hold two
+  // copies of every sheet on disk. After this, `pagesDir` only contains the
+  // stable-named SVGs (plus the PNGs we'll generate next), so buildSchPages
+  // can scan for `.svg` without filtering temp-prefix files.
+  for (const p of pages) {
+    if (p.rawSvg !== p.svg) fs.renameSync(p.rawSvg, p.svg);
+  }
+
+  // Convert SVGs to PNG in parallel. PNGs are still needed for the diff
+  // overlay (ImageMagick compare) and for hasDiff byte-level comparison;
+  // the manifest references the SVGs.
   await Promise.all(pages.map(p =>
     run("rsvg-convert", ["-w", "1600", p.svg, "-o", p.png]),
   ));
 
-  // Copy root page PNG to the side-level "combined" location for backward-compat
+  // Copy root page artefacts to the side-level "combined" locations.
   const root = pages.find(p => p.name === rootName);
-  if (root) fs.copyFileSync(root.png, rootPng);
+  if (root) {
+    fs.copyFileSync(root.png, rootPng);
+    fs.copyFileSync(root.svg, rootPng.replace(/\.png$/, ".svg"));
+  }
 
-  return pages.map(({ name, png }) => ({ name, png }));
+  return pages.map(({ name, svg }) => ({ name, image: svg }));
 }
 
 async function svgToPng(svg: string, png: string): Promise<void> {
@@ -467,7 +490,7 @@ async function renderSymLib(
   input: string,
   rootPng: string,
   pagesDir: string,
-): Promise<{ name: string; png: string }[]> {
+): Promise<{ name: string; image: string }[]> {
   fs.mkdirSync(pagesDir, { recursive: true });
   await run("kicad-cli", [
     "sym", "export", "svg",
@@ -475,23 +498,33 @@ async function renderSymLib(
     input,
   ]);
   // Filenames look like "<symbol>_unit1.svg"
-  const svgs = fs.readdirSync(pagesDir)
+  const rawSvgs = fs.readdirSync(pagesDir)
     .filter(f => f.endsWith(".svg") && f.endsWith("_unit1.svg"));
-  const pages = svgs.map(f => {
+  const pages = rawSvgs.map(f => {
     const name = f.slice(0, -"_unit1.svg".length);
     return {
       name,
-      svg: path.join(pagesDir, f),
+      rawSvg: path.join(pagesDir, f),
+      svg: path.join(pagesDir, `${name}.svg`),
       png: path.join(pagesDir, `${name}.png`),
     };
   });
   pages.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Rename each `<symbol>_unit1.svg` to `<symbol>.svg` so manifest scanning
+  // can ignore the kicad-cli unit suffix and the same name reaches both the
+  // SVG (manifest target) and the PNG (diff/hasDiff target).
+  for (const p of pages) fs.renameSync(p.rawSvg, p.svg);
+
   await Promise.all(pages.map(p =>
     run("rsvg-convert", ["-w", "800", p.svg, "-o", p.png]),
   ));
-  // For root/combined PNG: use the first symbol if any
-  if (pages.length > 0) fs.copyFileSync(pages[0].png, rootPng);
-  return pages.map(({ name, png }) => ({ name, png }));
+  // For root/combined: use the first symbol if any.
+  if (pages.length > 0) {
+    fs.copyFileSync(pages[0].png, rootPng);
+    fs.copyFileSync(pages[0].svg, rootPng.replace(/\.png$/, ".svg"));
+  }
+  return pages.map(({ name, svg }) => ({ name, image: svg }));
 }
 
 /** Render a single footprint file (.kicad_mod). kicad-cli scans the entire
@@ -509,7 +542,7 @@ async function renderFootprint(
   rootPng: string,
   pagesDir: string,
   stableName: string,
-): Promise<{ name: string; png: string }[]> {
+): Promise<{ name: string; image: string }[]> {
   fs.mkdirSync(pagesDir, { recursive: true });
   const isolatedLib = path.join(pagesDir, "lib.pretty");
   fs.mkdirSync(isolatedLib, { recursive: true });
@@ -530,11 +563,14 @@ async function renderFootprint(
   const stableSvg = path.join(pagesDir, `${stableName}.svg`);
   const stablePng = path.join(pagesDir, `${stableName}.png`);
   await run("rsvg-convert", ["-w", "1200", stableSvg, "-o", stablePng]);
+  // Side-level "combined" gets both the PNG (diff overlay / hasDiff input)
+  // and the SVG (manifest target).
   fs.copyFileSync(stablePng, rootPng);
+  fs.copyFileSync(stableSvg, rootPng.replace(/\.png$/, ".svg"));
 
   // Clean up isolated lib (small, but accumulates over many renders)
   fs.rmSync(isolatedLib, { recursive: true, force: true });
-  return [{ name: stableName, png: stablePng }];
+  return [{ name: stableName, image: stableSvg }];
 }
 
 // =============================================================================
@@ -563,10 +599,10 @@ export function resolveOutputPath(arg: string, defaultName: string): string {
 function buildLayerMap(layersDir: string, side: "before" | "after", safe: string): Record<string, string> {
   const map: Record<string, string> = {};
   if (!fs.existsSync(layersDir)) return map;
-  const files = fs.readdirSync(layersDir).filter(f => f.endsWith(".png")).sort();
+  const files = fs.readdirSync(layersDir).filter(f => f.endsWith(".svg")).sort();
   for (const f of files) {
-    // Filename like "BoardName-F_Cu.png" — extract layer after last hyphen
-    const stem = f.replace(/\.png$/, "");
+    // Filename like "BoardName-F_Cu.svg" — extract layer after last hyphen
+    const stem = f.replace(/\.svg$/, "");
     const layerToken = stem.split("-").pop() ?? stem;
     const layerName = layerToken.replace(/_/g, ".");
     map[layerName] = `${side}/layers_${safe}/${f}`;
@@ -576,18 +612,24 @@ function buildLayerMap(layersDir: string, side: "before" | "after", safe: string
 
 /** Scan the schematic per-page directory and return a sorted page list.
  *  The root sheet (matching the schematic basename) is always first; that
- *  basename is recovered by finding the PNG whose name matches the project. */
+ *  basename is recovered by finding the SVG whose name matches the project.
+ *  Each page entry's `image` is an SVG so the viewer can zoom in indefinitely. */
 function buildSchPages(
   pagesDir: string,
   side: "before" | "after",
   safe: string,
   rootName: string,
-): { name: string; png: string }[] {
+): { name: string; image: string }[] {
   if (!fs.existsSync(pagesDir)) return [];
-  const pngs = fs.readdirSync(pagesDir).filter(f => f.endsWith(".png"));
-  const pages = pngs.map(f => ({
-    name: f.slice(0, -".png".length),
-    png: `${side}/sch_pages_${safe}/${f}`,
+  // Stable-named SVGs are produced by renderSch alongside the kicad-cli
+  // outputs. Filter on those so we don't pick up the temp-prefix originals.
+  const all = fs.readdirSync(pagesDir).filter(f => f.endsWith(".svg"));
+  // The page index uses stable names — see renderSch which copies each page
+  // SVG to ${name}.svg. Filter to those (skip kicad-cli's `preview_xxxx.svg`
+  // intermediates) by checking the matching `${name}.svg` exists.
+  const pages = all.map(f => ({
+    name: f.slice(0, -".svg".length),
+    image: `${side}/sch_pages_${safe}/${f}`,
   }));
   pages.sort((a, b) => {
     if (a.name === rootName) return -1;
@@ -599,13 +641,14 @@ function buildSchPages(
 
 /** Scan an items directory (sym/fp) and return entries as pages.
  *  Used for symbol libraries and footprint files where each contained
- *  symbol/footprint becomes a selectable page in the viewer. */
-function buildItemPages(itemsDir: string, side: "before" | "after", safe: string): { name: string; png: string }[] {
+ *  symbol/footprint becomes a selectable page in the viewer. Surfaces SVG
+ *  paths so the viewer can zoom without rasterisation artefacts. */
+function buildItemPages(itemsDir: string, side: "before" | "after", safe: string): { name: string; image: string }[] {
   if (!fs.existsSync(itemsDir)) return [];
-  const pngs = fs.readdirSync(itemsDir).filter(f => f.endsWith(".png")).sort();
-  return pngs.map(f => ({
-    name: f.slice(0, -".png".length),
-    png: `${side}/items_${safe}/${f}`,
+  const svgs = fs.readdirSync(itemsDir).filter(f => f.endsWith(".svg")).sort();
+  return svgs.map(f => ({
+    name: f.slice(0, -".svg".length),
+    image: `${side}/items_${safe}/${f}`,
   }));
 }
 
@@ -628,7 +671,10 @@ function buildManifest(args: {
   } = args;
 
   function buildSide(side: "before" | "after"): SideManifest {
-    const out: SideManifest = { combined: `${side}/${safe}.png` };
+    // Side-level "combined" points at the rendered SVG so the viewer's main
+    // image scales without pixelation. The matching PNG still lives next to
+    // it (used for hasDiff comparison and the diff highlight overlay).
+    const out: SideManifest = { combined: `${side}/${safe}.svg` };
     if (fileType === "pcb") {
       out.layers = buildLayerMap(path.join(outputDir, `${side}/layers_${safe}`), side, safe);
     } else if (fileType === "sch" && schRootName) {
@@ -656,19 +702,20 @@ function buildManifest(args: {
   // Per-page hasDiff: when the file has selectable pages (multi-sheet sch,
   // sym/fp libraries with multiple items), mark each page (on both sides)
   // with whether its rendered PNG differs from the same-named page on the
-  // opposite side. The viewer's page-tab list is a union of before+after
-  // page names, so before-only pages (i.e. removed in the target ref) need
-  // to be marked too — otherwise removed sheets appear in the strip without
-  // any "this changed" indicator and are easy to miss.
+  // opposite side. We deliberately compare PNGs (byte-stable rasters), not
+  // SVGs (which can wiggle due to whitespace / ordering differences even
+  // when the rendered picture is identical). `page.image` is the SVG path
+  // we serve to the viewer; `pngFor()` derives the matching PNG sibling.
+  const pngFor = (image: string) => image.replace(/\.svg$/, ".png");
   if (m.after?.pages && m.before?.pages) {
-    const beforeByName = new Map(m.before.pages.map(p => [p.name, p.png]));
-    const afterByName = new Map(m.after.pages.map(p => [p.name, p.png]));
+    const beforeByName = new Map(m.before.pages.map(p => [p.name, p.image]));
+    const afterByName = new Map(m.after.pages.map(p => [p.name, p.image]));
     for (const page of m.after.pages) {
       const beforeRel = beforeByName.get(page.name);
       if (!beforeRel) { page.hasDiff = true; continue; } // page added in after
       try {
-        const a = fs.readFileSync(path.join(outputDir, page.png));
-        const b = fs.readFileSync(path.join(outputDir, beforeRel));
+        const a = fs.readFileSync(path.join(outputDir, pngFor(page.image)));
+        const b = fs.readFileSync(path.join(outputDir, pngFor(beforeRel)));
         page.hasDiff = !a.equals(b);
       } catch {
         page.hasDiff = true;
@@ -778,8 +825,13 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     // contents). Same logic: a previous render might have left a different
     // file's outputs at the same paths.
     {
-      const combined = path.join(sideDir, `${safe}.png`);
-      if (fs.existsSync(combined)) try { fs.unlinkSync(combined); } catch { /* */ }
+      // Clear both the PNG (used for diff overlay / hasDiff) and the SVG
+      // (referenced by the manifest) so a previously-rendered file that
+      // has since been removed or renamed doesn't surface as a stale tab.
+      for (const ext of [".png", ".svg"]) {
+        const combined = path.join(sideDir, `${safe}${ext}`);
+        if (fs.existsSync(combined)) try { fs.unlinkSync(combined); } catch { /* */ }
+      }
       for (const dir of [layersDir, schPagesDir, itemPagesDir]) {
         if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -1315,7 +1367,7 @@ function rewriteManifestPaths(m: Manifest, outDir: string, htmlDir: string): Man
     }
     if (s.pages) {
       out.pages = s.pages.map(p => {
-        const np: { name: string; png: string; hasDiff?: boolean } = { name: p.name, png: rewrite(p.png) };
+        const np: { name: string; image: string; hasDiff?: boolean } = { name: p.name, image: rewrite(p.image) };
         if (p.hasDiff !== undefined) np.hasDiff = p.hasDiff;
         return np;
       });

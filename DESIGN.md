@@ -211,21 +211,40 @@ FileManifest {
 }
 
 SideManifest {
-  combined: string;            // 主画像
-  layers?: Record<string, string>;  // pcb のみ
-  pages?: SchPage[];           // sch / sym / fp
+  combined: string;            // 主画像 (SVG。viewer 側で無限ズーム可)
+  layers?: Record<string, string>;  // pcb のみ (SVG)
+  pages?: SchPage[];           // sch / sym / fp (各ページ SVG)
 }
 
 SchPage {
   name: string;
-  png: string;
-  hasDiff?: boolean;     // before/after の同名 page で PNG が違うか
+  image: string;         // SVG。viewer の <img src> として使う
+  hasDiff?: boolean;     // before/after の同名 page で PNG byte が違うか
 }
 ```
 
 `hasDiff` は **テキストの差異ではなく視覚的な差異** を表す。例えば
 PCB の silkscreen に出ない property の値だけ変わっても hasDiff=false
 になる。これにより「diff ありますよ」マーカーがノイズで光らない。
+判定はラスタライズ済 PNG の byte 比較で行う (SVG だと whitespace や
+要素順だけが変わって視覚的に同じケースを拾えてしまうため)。
+
+### SVG / PNG の役割分担
+
+manifest が viewer に渡す画像はすべて **SVG**。これは viewer 側で
+無限にズームしても破綻しないため。
+
+PNG は次の用途で `${side}/${safe}.png` / `${pagesDir}/<name>.png` /
+`${layersDir}/<layer>.png` として並走で生成・保持する:
+
+- `hasDiff` の byte 比較
+- `--md` レポート用の side-by-side 画像
+- 差分ハイライト overlay (`magick compare` の出力 — `M.diff` のみ
+  最初から PNG)
+
+将来 `rsvg-convert` を WASM ラスタライザに置換する話 (上記「ランタイム
+依存の縮約」) は PNG 生成側の実装詳細で、manifest schema には影響
+しない。
 
 ## 4 つのファイル型
 

@@ -758,7 +758,10 @@ function makeLayerStack(side, id) {
     let pageSrc;
     if (wantName && data.pages) {
       const match = data.pages.find(p => p.name === wantName);
-      if (match) pageSrc = match.png;
+      // Renamed `.png` → `.image` when the manifest started carrying SVG
+      // paths so the viewer can zoom indefinitely. Older HTML files have
+      // `.png` instead — fall back so they keep rendering after upgrade.
+      if (match) pageSrc = match.image ?? match.png;
     }
     img.src = pageSrc || data.combined;
     img.onerror = () => { img.style.display = 'none'; };

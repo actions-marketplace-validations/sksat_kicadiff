@@ -187,6 +187,36 @@ test.describe("HTML output", () => {
     expect(Object.keys(pcb.before?.layers ?? {})).toHaveLength(5);
     expect(pcb.diff).toBeTruthy();
   });
+
+  test("manifest references .svg for combined and per-layer images", () => {
+    // The viewer needs vector sources so users can zoom indefinitely. The
+    // diff overlay (M.diff) stays PNG since it's an ImageMagick output, but
+    // every "live" image (combined, layers, sch pages, sym/fp items) must
+    // be served as SVG.
+    runCli(["pcb", PCB_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    const pcb = m.files[0];
+    expect(pcb.after.combined).toMatch(/\.svg$/);
+    expect(pcb.before.combined).toMatch(/\.svg$/);
+    for (const v of Object.values(pcb.after.layers as Record<string, string>)) {
+      expect(v).toMatch(/\.svg$/);
+    }
+    for (const v of Object.values(pcb.before.layers as Record<string, string>)) {
+      expect(v).toMatch(/\.svg$/);
+    }
+    // Diff highlight overlay stays PNG.
+    expect(pcb.diff).toMatch(/\.png$/);
+  });
+
+  test("manifest references .svg for schematic combined and pages", () => {
+    runCli(["sch", SCH_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    const sch = m.files[0];
+    expect(sch.after.combined).toMatch(/\.svg$/);
+    if (sch.after.pages) {
+      for (const p of sch.after.pages) expect(p.image).toMatch(/\.svg$/);
+    }
+  });
 });
 
 // =============================================================================
