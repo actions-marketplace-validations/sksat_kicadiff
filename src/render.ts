@@ -1037,6 +1037,18 @@ export function resolveInputs(
   const abs = path.isAbsolute(input) ? input : path.resolve(process.cwd(), input);
 
   if (!fs.existsSync(abs)) {
+    // A single KiCad file that doesn't exist on disk may still exist at a
+    // git ref — for example, when reviewing a file that was deleted in the
+    // working tree. Let it through so render() can extract from the ref.
+    // render() will fail later if neither ref has it either.
+    if (
+      abs.endsWith(".kicad_pcb") ||
+      abs.endsWith(".kicad_sch") ||
+      abs.endsWith(".kicad_sym") ||
+      abs.endsWith(".kicad_mod")
+    ) {
+      return [abs];
+    }
     throw new Error(`input not found: ${abs}`);
   }
 

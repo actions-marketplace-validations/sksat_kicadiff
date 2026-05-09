@@ -465,8 +465,11 @@ function buildMarkdownReport(
     // 1. Heading
     lines.push(`## \`${r.relPath}\` (${m.type})`);
 
-    // 2. Side-by-side image table (only when both before and after exist).
-    //    Markdown's overlay/swipe equivalents would need JS — out of scope.
+    // 2. Image(s). Three shapes depending on which sides rendered:
+    //    - both sides: side-by-side image table (the typical diff view)
+    //    - after only: a "new file" preview
+    //    - before only: a "deleted in <toRef>" preview, so the reviewer
+    //      still sees the visual context for the deletion
     if (m.hasBefore && r.beforePng && r.afterPng) {
       lines.push("");
       lines.push(`| Before (${fromLabel}) | After (${toLabel}) |`);
@@ -475,6 +478,9 @@ function buildMarkdownReport(
     } else if (r.afterPng) {
       lines.push("");
       lines.push(`![Preview](${rel(r.afterPng)})`);
+    } else if (r.beforePng) {
+      lines.push("");
+      lines.push(`![Before — deleted in ${toLabel}](${rel(r.beforePng)})`);
     }
 
     // 3. Structural diff body (pcb/sch only). markdownDiff produces its own

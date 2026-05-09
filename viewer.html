@@ -281,10 +281,18 @@ function rebuildForCurrentFile() {
  *  M.after.pages exists and has more than one entry. Page index 0 is
  *  the default (root sheet for sch, first symbol/footprint for sym/fp). */
 function buildPageTabs() {
-  // Page tabs come from whichever side actually rendered. Normally that's
-  // the after side; for files deleted at the target ref we fall back to
-  // before so the user can still navigate the historical page set.
-  const pages = M.after?.pages || M.before?.pages || [];
+  // Take the union of before- and after-side page lists, indexed by name,
+  // so a sheet/symbol that was added OR removed between revisions is still
+  // navigable. After-side pages come first (preserves their order — that's
+  // what the user is most likely looking at); before-only pages (i.e.
+  // removed in the target ref) follow. The has-diff marker separately
+  // reflects whether each tab has a real visual change on the after side.
+  const afterPages = M.after?.pages || [];
+  const beforePages = M.before?.pages || [];
+  const seen = new Set();
+  const pages = [];
+  for (const p of afterPages) { if (!seen.has(p.name)) { seen.add(p.name); pages.push(p); } }
+  for (const p of beforePages) { if (!seen.has(p.name)) { seen.add(p.name); pages.push(p); } }
   const supports = (M.type === 'sch' || M.type === 'sym' || M.type === 'fp');
   if (!supports || pages.length <= 1) return;
   const bar = $('#page-tabs');
@@ -736,10 +744,17 @@ function makeLayerStack(side, id) {
     // therefore compare against the wrong before-side page. Falls back to
     // `combined` when the side has no matching page (e.g. removed sheet).
     const img = document.createElement('img');
-    // Active page name from whichever side has the page list (normally
-    // after; falls back to before for deleted-at-target files).
-    const tabPages = M.after?.pages || M.before?.pages;
-    const wantName = tabPages?.[currentPage]?.name;
+    // Active page name comes from the union list buildPageTabs() builds:
+    // after-side pages first, then before-only pages. Looking up by name
+    // (rather than raw index) handles all of: added, removed, or stable
+    // pages between revisions.
+    const afterPgs = M.after?.pages || [];
+    const beforePgs = M.before?.pages || [];
+    const seen = new Set();
+    const allPgs = [];
+    for (const p of afterPgs) { if (!seen.has(p.name)) { seen.add(p.name); allPgs.push(p); } }
+    for (const p of beforePgs) { if (!seen.has(p.name)) { seen.add(p.name); allPgs.push(p); } }
+    const wantName = allPgs[currentPage]?.name;
     let pageSrc;
     if (wantName && data.pages) {
       const match = data.pages.find(p => p.name === wantName);
