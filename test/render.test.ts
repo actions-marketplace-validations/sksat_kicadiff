@@ -566,6 +566,79 @@ test.describe("--output flag", () => {
 });
 
 // =============================================================================
+// Markdown templating: --md-template / --md-file-template
+// =============================================================================
+
+test.describe("--md templating", () => {
+  /** Run kicadiff and capture the generated markdown report. */
+  function runMd(args: string[]): string {
+    const dir = path.join(outputDir, "md-out");
+    fs.mkdirSync(dir);
+    runCli([PCB_FILE, "--output-dir", outputDir, "--md", "--output", dir, ...args]);
+    const reportName = PROJECT_HTML.replace(/_diff\.html$/, "_diff.md");
+    return fs.readFileSync(path.join(dir, reportName), "utf8");
+  }
+
+  test("default templates produce the bundled report layout", () => {
+    const md = runMd([]);
+    // Sanity check the recognizable structure of the bundled default:
+    // a `## ` heading per file, the side-by-side image table.
+    expect(md).toMatch(/^## `.+\.kicad_pcb` \(pcb\)/m);
+    expect(md).toMatch(/\| Before \(HEAD\) \| After \(working tree\) \|/);
+    // Trailing newline (so the file has a clean POSIX-style ending).
+    expect(md.endsWith("\n")).toBe(true);
+  });
+
+  test("--md-template lets a project template wrap the file sections", () => {
+    const tplPath = path.join(outputDir, "proj.tpl");
+    fs.writeFileSync(
+      tplPath,
+      "# Diff: {{from_label}} → {{to_label}}\n\nfile_count={{file_count}}\n\n{{file_sections}}\n",
+    );
+    const md = runMd(["--md-template", tplPath]);
+    expect(md).toContain("# Diff: HEAD → working tree");
+    expect(md).toContain("file_count=2");
+    // Default file template is still in effect, so the side-by-side table
+    // should still appear inside the wrapped output.
+    expect(md).toMatch(/\| Before \(HEAD\) \| After \(working tree\) \|/);
+  });
+
+  test("--md-file-template overrides per-file rendering", () => {
+    const tplPath = path.join(outputDir, "file.tpl");
+    fs.writeFileSync(tplPath, "FILE: {{path}} ({{type}})");
+    const md = runMd(["--md-file-template", tplPath]);
+    expect(md).toMatch(/^FILE: .+\.kicad_pcb \(pcb\)$/m);
+    expect(md).toMatch(/^FILE: .+\.kicad_sch \(sch\)$/m);
+    // Default project template just emits {{file_sections}}, so the
+    // side-by-side table from the bundled default file template is gone.
+    expect(md).not.toContain("| --- | --- |");
+  });
+
+  test("inverted section in template renders only when value is falsy", () => {
+    const tplPath = path.join(outputDir, "file.tpl");
+    fs.writeFileSync(
+      tplPath,
+      "{{path}}: {{#has_structural_diff}}HAS{{/has_structural_diff}}{{^has_structural_diff}}NONE{{/has_structural_diff}}",
+    );
+    const md = runMd(["--md-file-template", tplPath]);
+    // The fixture's PCB and SCH always render structural diff bodies, so
+    // every line should contain HAS, not NONE. (Mostly verifies that the
+    // template engine wires has_structural_diff correctly.)
+    expect(md).toContain("HAS");
+    expect(md).not.toContain("NONE");
+  });
+
+  test("missing template path produces a clear error", () => {
+    const r = runCli(
+      [PCB_FILE, "--output-dir", outputDir, "--md", "--md-template", "/nonexistent/x.tpl"],
+      { allowFailure: true },
+    );
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/nonexistent\/x\.tpl|ENOENT/);
+  });
+});
+
+// =============================================================================
 // --text-only: structural text diff (no SVG/PNG/HTML)
 // =============================================================================
 

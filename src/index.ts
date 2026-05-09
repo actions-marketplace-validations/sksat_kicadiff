@@ -21,6 +21,7 @@ import * as path from "node:path";
 import { renderProject, printProjectSummary, resolveInputs, resolveOutputPath } from "./render.ts";
 import type { LogLevel, ProjectRenderResult } from "./render.ts";
 import { textDiff, markdownDiff } from "./textdiff.ts";
+import { renderTemplate } from "./template.ts";
 import type { FileType } from "./types.ts";
 
 function usage(): void {
@@ -72,6 +73,16 @@ Options:
   --text-only            Print only the text diff (no SVG/PNG/HTML rendering — fast)
   --markdown, --md       Render images and emit a markdown report (side-by-side
                          image table + structural diff). Skips HTML viewer.
+  --md-template <path>   Use a custom project-level markdown template. The
+                         template sees: from_ref, to_ref, from_label, to_label,
+                         file_count, has_changes, files (array), and the
+                         pre-rendered file_sections string. Mustache subset:
+                         {{var}}, {{#section}}…{{/section}}, {{^inverted}}…{{/}}.
+  --md-file-template <p> Use a custom per-file markdown template. Rendered for
+                         each file with: path, type, before_image, after_image,
+                         has_before, has_after, has_both, after_only, before_only,
+                         has_structural_diff, structural_diff. The result fills
+                         {{file_sections}} in the project template.
   -v, --verbose, --debug Show every PNG path in the summary (default: only HTML path)
   -q, --quiet            Suppress the summary entirely
   --log <level>          Set summary log level: quiet | info | debug (default: info)
@@ -117,6 +128,15 @@ interface ParsedArgs {
    *  (side-by-side, structural diff for pcb/sch). Images are rendered;
    *  HTML viewer generation is skipped (markdown is the deliverable). */
   markdown?: boolean;
+  /** Path to a custom project-level markdown template. Sees the project
+   *  context: from_ref, to_ref, files (array), file_count, has_changes,
+   *  and the pre-rendered file_sections string. */
+  mdTemplate?: string;
+  /** Path to a custom per-file markdown template. Rendered once per file
+   *  with the file context (path, type, before_image, after_image, the
+   *  *_only / has_* booleans, and structural_diff). The result populates
+   *  file_sections in the project template. */
+  mdFileTemplate?: string;
   /** Log level for stdout summary. Default "info". "debug" surfaces every PNG
    *  path; "quiet" suppresses the summary entirely. */
   logLevel?: LogLevel;
@@ -211,6 +231,8 @@ function parseArgs(argv: string[]): ParsedArgs {
   let text = false;
   let textOnly = false;
   let markdown = false;
+  let mdTemplate: string | undefined;
+  let mdFileTemplate: string | undefined;
   let logLevel: LogLevel | undefined;
   let noCache = false;
   let open: string | undefined;
@@ -246,6 +268,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       text = true;
     } else if (arg === "--markdown" || arg === "--md") {
       markdown = true;
+    } else if (arg === "--md-template") {
+      if (i + 1 >= argv.length) throw new Error("--md-template requires a path");
+      mdTemplate = argv[++i];
+    } else if (arg === "--md-file-template") {
+      if (i + 1 >= argv.length) throw new Error("--md-file-template requires a path");
+      mdFileTemplate = argv[++i];
     } else if (arg === "--no-cache") {
       noCache = true;
     } else if (arg === "--verbose" || arg === "-v" || arg === "--debug") {
@@ -358,7 +386,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   return {
     input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly,
-    markdown, logLevel, noCache, scope, open,
+    markdown, mdTemplate, mdFileTemplate, logLevel, noCache, scope, open,
   };
 }
 
@@ -515,9 +543,48 @@ function refLabelMd(ref: string): string {
   return ref;
 }
 
+/** Default per-file markdown template. Reproduces the pre-templating output
+ *  shape: a heading, then the appropriate image block (side-by-side table /
+ *  preview / deletion notice), then the structural diff body. Authors can
+ *  override via --md-file-template. */
+const DEFAULT_FILE_TEMPLATE =
+  "## `{{path}}` ({{type}})" +
+  "{{#has_both}}\n\n| Before ({{from_label}}) | After ({{to_label}}) |\n| --- | --- |\n| ![Before]({{before_image}}) | ![After]({{after_image}}) |{{/has_both}}" +
+  "{{#after_only}}\n\n![Preview]({{after_image}}){{/after_only}}" +
+  "{{#before_only}}\n\n![Before — deleted in {{to_label}}]({{before_image}}){{/before_only}}" +
+  "{{#has_structural_diff}}\n\n{{structural_diff}}{{/has_structural_diff}}";
+
+/** Default project-level template. Just emits the rendered file sections
+ *  joined with blank lines and a trailing newline. Override via --md-template
+ *  to wrap the whole thing in a custom heading / summary / front-matter. */
+const DEFAULT_PROJECT_TEMPLATE = "{{file_sections}}\n";
+
+interface FileTemplateContext extends Record<string, unknown> {
+  path: string;
+  type: string;
+  from_ref: string;
+  to_ref: string;
+  from_label: string;
+  to_label: string;
+  before_image: string;
+  after_image: string;
+  has_before: boolean;
+  has_after: boolean;
+  has_both: boolean;
+  after_only: boolean;
+  before_only: boolean;
+  has_structural_diff: boolean;
+  structural_diff: string;
+}
+
 /** Build the markdown report text. Image paths are emitted relative to
  *  `mdDir` so the file is portable: ship the .md alongside its image
- *  directory and links resolve from any location. */
+ *  directory and links resolve from any location.
+ *
+ *  Templating: each file is rendered through the per-file template, results
+ *  are joined with `\n\n`, and that string fills `{{file_sections}}` in the
+ *  project template. Custom templates from --md-template / --md-file-template
+ *  override the bundled defaults. */
 function buildMarkdownReport(
   parsed: ParsedArgs,
   project: ProjectRenderResult,
@@ -531,48 +598,63 @@ function buildMarkdownReport(
     ? repoRootOf(project.results[0].filePath)
     : null;
 
-  const sections: string[] = [];
-  for (const r of project.results) {
+  const fileTemplate = parsed.mdFileTemplate
+    ? fs.readFileSync(parsed.mdFileTemplate, "utf8")
+    : DEFAULT_FILE_TEMPLATE;
+  const projectTemplate = parsed.mdTemplate
+    ? fs.readFileSync(parsed.mdTemplate, "utf8")
+    : DEFAULT_PROJECT_TEMPLATE;
+
+  const fileContexts: FileTemplateContext[] = project.results.map((r) => {
     const m = r.manifest;
-    const lines: string[] = [];
     const rel = (abs: string) => path.relative(mdDir, abs);
-
-    // 1. Heading
-    lines.push(`## \`${r.relPath}\` (${m.type})`);
-
-    // 2. Image(s). Three shapes depending on which sides rendered:
-    //    - both sides: side-by-side image table (the typical diff view)
-    //    - after only: a "new file" preview
-    //    - before only: a "deleted in <toRef>" preview, so the reviewer
-    //      still sees the visual context for the deletion
-    if (m.hasBefore && r.beforePng && r.afterPng) {
-      lines.push("");
-      lines.push(`| Before (${fromLabel}) | After (${toLabel}) |`);
-      lines.push("| --- | --- |");
-      lines.push(`| ![Before](${rel(r.beforePng)}) | ![After](${rel(r.afterPng)}) |`);
-    } else if (r.afterPng) {
-      lines.push("");
-      lines.push(`![Preview](${rel(r.afterPng)})`);
-    } else if (r.beforePng) {
-      lines.push("");
-      lines.push(`![Before — deleted in ${toLabel}](${rel(r.beforePng)})`);
-    }
-
-    // 3. Structural diff body (pcb/sch only). markdownDiff produces its own
-    //    heading; drop it so our heading above isn't duplicated.
+    const hasBoth = !!(m.hasBefore && r.beforePng && r.afterPng);
+    const afterOnly = !hasBoth && !!r.afterPng;
+    const beforeOnly = !hasBoth && !r.afterPng && !!r.beforePng;
+    let structuralDiff = "";
     if (m.type === "pcb" || m.type === "sch") {
       const struct = markdownDiff(r.filePath, fromRef, toRef, repoRoot)
         .split("\n");
+      // markdownDiff prefixes a `## …` heading; drop it so our template
+      // controls heading placement (and avoids duplicates).
       if (struct[0]?.startsWith("##")) {
         struct.shift();
         while (struct.length > 0 && struct[0] === "") struct.shift();
       }
-      lines.push("");
-      lines.push(...struct);
+      structuralDiff = struct.join("\n");
     }
-    sections.push(lines.join("\n"));
-  }
-  return sections.join("\n\n") + "\n";
+    return {
+      path: r.relPath,
+      type: m.type,
+      from_ref: fromRef,
+      to_ref: toRef,
+      from_label: fromLabel,
+      to_label: toLabel,
+      before_image: r.beforePng ? rel(r.beforePng) : "",
+      after_image: r.afterPng ? rel(r.afterPng) : "",
+      has_before: !!r.beforePng,
+      has_after: !!r.afterPng,
+      has_both: hasBoth,
+      after_only: afterOnly,
+      before_only: beforeOnly,
+      has_structural_diff: structuralDiff.length > 0,
+      structural_diff: structuralDiff,
+    };
+  });
+
+  const sections = fileContexts.map((ctx) => renderTemplate(fileTemplate, ctx));
+  const fileSections = sections.join("\n\n");
+
+  return renderTemplate(projectTemplate, {
+    from_ref: fromRef,
+    to_ref: toRef,
+    from_label: fromLabel,
+    to_label: toLabel,
+    file_count: fileContexts.length,
+    has_changes: fileContexts.some((c) => c.has_structural_diff || c.has_both || c.after_only || c.before_only),
+    files: fileContexts,
+    file_sections: fileSections,
+  });
 }
 
 /** Project-level filename for the combined markdown — kept in sync with the

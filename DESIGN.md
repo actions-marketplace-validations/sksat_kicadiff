@@ -84,6 +84,32 @@ ImageMagick) に丸投げし、kicadiff は orchestration とキャッシュと
 ステータスログは stderr に流す (リダイレクトでファイルが汚れない
 ため)。
 
+#### テンプレート
+
+レポートは 2 層のテンプレートで組み立てる:
+
+1. **file テンプレート** — 各ファイル毎に 1 度レンダリングされ、
+   `path` / `type` / `before_image` / `after_image` / `has_both` /
+   `after_only` / `before_only` / `has_structural_diff` /
+   `structural_diff` 等を context に持つ。
+2. **project テンプレート** — 全 file セクションを `\n\n` で連結
+   した結果が `{{file_sections}}` として渡される。これに加えて
+   `from_ref` / `to_ref` / `from_label` / `to_label` /
+   `file_count` / `has_changes` / `files` (配列) も見える。
+
+実装は `src/template.ts` の Mustache サブセット (依存なし、~120 行):
+`{{var}}` / `{{#section}}…{{/section}}` (truthy block; array は
+iterate) / `{{^section}}…{{/section}}` (inverted block) /
+`{{!comment}}` / dot-path lookup / context stack walk-up。標準的な
+Mustache の standalone-tag 空白 trim はやらないので、テンプレート内
+の改行配置はテンプレート作者の責任 (default テンプレートは
+inline-section スタイルでこれを回避している)。
+
+CLI 側からは `--md-template <path>` (project) と
+`--md-file-template <path>` (file) で個別に上書きできる。どちらも
+省略可で、その場合は `src/index.ts` 内の組み込みデフォルト
+(従来の出力と完全互換) が使われる。
+
 ### 構造的なテキスト / Markdown 差分
 
 `textdiff.ts` が S-expression を最小限パースし、`(footprint ...)` /

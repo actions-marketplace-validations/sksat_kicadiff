@@ -70,6 +70,15 @@ kicadiff project/ --text                # also print structural text diff
 kicadiff project/ --text-only           # text only, skip rendering (fast)
 kicadiff project/ --images-only         # PNGs only, no HTML / markdown
 
+# Custom markdown templates (Mustache subset: {{var}}, {{#section}}…{{/section}},
+# {{^inverted}}…{{/inverted}}). Project template sees from_label / to_label /
+# file_count / has_changes / files / file_sections; file template sees path /
+# type / before_image / after_image / has_both / after_only / before_only /
+# has_structural_diff / structural_diff. Either flag is optional; the default
+# template ships built-in.
+kicadiff project/ --md --md-template my-report.md.tpl
+kicadiff project/ --md --md-file-template my-file.md.tpl
+
 # Auto-open the HTML in VSCode (Live Preview), a browser, etc.
 kicadiff project/ --open vscode
 kicadiff project/ --open firefox

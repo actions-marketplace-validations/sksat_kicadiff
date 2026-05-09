@@ -71,6 +71,16 @@ kicadiff project/ --text                # 構造テキスト差分も出力
 kicadiff project/ --text-only           # テキストのみ、レンダリングなし (高速)
 kicadiff project/ --images-only         # PNG だけ、HTML / markdown なし
 
+# カスタム markdown テンプレート (Mustache サブセット: {{var}},
+# {{#section}}…{{/section}}, {{^inverted}}…{{/inverted}})。プロジェクト
+# テンプレートからは from_label / to_label / file_count / has_changes /
+# files / file_sections が、file テンプレートからは path / type /
+# before_image / after_image / has_both / after_only / before_only /
+# has_structural_diff / structural_diff が見える。どちらも省略可で
+# デフォルトテンプレートは内蔵。
+kicadiff project/ --md --md-template my-report.md.tpl
+kicadiff project/ --md --md-file-template my-file.md.tpl
+
 # HTML を VSCode (Live Preview) やブラウザで自動オープン
 kicadiff project/ --open vscode
 kicadiff project/ --open firefox
