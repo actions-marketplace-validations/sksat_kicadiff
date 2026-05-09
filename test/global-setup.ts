@@ -14,6 +14,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  *   - test/fixtures/sch/       : sch subcommand (schematic only)
  */
 export default function globalSetup() {
+  // Belt-and-suspenders: ensure no test (or fixture-generation step) ever
+  // spawns the real `code` / `xdg-open`, even if a future test forgets to
+  // pass --open without an env override. Empty value = no-op in render.ts.
+  if (process.env.KICADIFF_OPEN_CMD === undefined) {
+    process.env.KICADIFF_OPEN_CMD = "";
+  }
+
   const projectDir = path.resolve(__dirname, "..");
   const repoRoot = path.resolve(projectDir, "..");
   const fixtureDir = path.join(projectDir, "test", "fixtures");

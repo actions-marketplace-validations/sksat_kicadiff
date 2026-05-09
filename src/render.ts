@@ -11,6 +11,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import which from "which";
+import VIEWER_HTML from "./viewer-content.ts";
 import type { FileType, FileManifest, Manifest, ProjectManifest, SideManifest } from "./types.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -235,19 +236,11 @@ function buildManifest(args: {
 
 /** Inject the manifest into viewer.html as a <script> tag.
  *  </script> in JSON is escaped to prevent breaking out of the script tag. */
-/** Read viewer.html content. In dev (Node) we read from disk so edits are
- *  picked up immediately; in a `bun build --compile` binary the file lives
- *  next to the executable, so we look there as a fallback. */
+/** Returns the viewer.html content, embedded at build-time as a TS string
+ *  (see scripts/embed-viewer.mjs). Bundling this way lets bun --compile
+ *  produce a fully self-contained binary with no external assets. */
 function readViewerHtml(): string {
-  const candidates = [
-    path.resolve(__dirname, "..", "viewer.html"),         // dev: kicadiff/viewer.html
-    path.resolve(__dirname, "viewer.html"),               // bun: same dir as binary
-    path.resolve(process.cwd(), "viewer.html"),           // last resort
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return fs.readFileSync(p, "utf8");
-  }
-  throw new Error("viewer.html not found in any of: " + candidates.join(", "));
+  return VIEWER_HTML;
 }
 
 function buildHtml(_viewerPath: string, manifest: Manifest): string {

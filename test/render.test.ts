@@ -343,9 +343,11 @@ test.describe("auto-open behavior", () => {
 
   test("--open=<cmd> accepts arbitrary command via `=` syntax", () => {
     const { script, log } = makeOpenerMock(outputDir);
-    runCli([PCB_FILE, "--output-dir", outputDir, `--open=${script}`], {
-      env: { ...process.env },
-    });
+    // Explicitly clear KICADIFF_OPEN_CMD (which global-setup sets to "" as a
+    // safety default) so that the CLI's --open=<cmd> resolution kicks in.
+    const env = { ...process.env };
+    delete env.KICADIFF_OPEN_CMD;
+    runCli([PCB_FILE, "--output-dir", outputDir, `--open=${script}`], { env });
     expect(fs.existsSync(log)).toBe(true);
   });
 

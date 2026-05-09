@@ -7,13 +7,17 @@
     "kicadiff": "./kicadiff"
   },
   "scripts": {
+    "embed-viewer": "node scripts/embed-viewer.mjs",
+    "prepare": "node scripts/embed-viewer.mjs",
+    "pretest": "node scripts/embed-viewer.mjs",
+    "pretypecheck": "node scripts/embed-viewer.mjs",
     "test": "playwright test",
     "typecheck": "tsc --noEmit",
-    "build:bun": "bun build --compile src/index.ts --outfile dist/kicadiff",
-    "build:bun:linux-x64": "bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/kicadiff-linux-x64",
-    "build:bun:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/index.ts --outfile dist/kicadiff-linux-arm64",
-    "build:bun:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/kicadiff-darwin-arm64",
-    "build:bun:darwin-x64": "bun build --compile --target=bun-darwin-x64 src/index.ts --outfile dist/kicadiff-darwin-x64",
+    "build:bun": "node scripts/embed-viewer.mjs && bun build --compile src/index.ts --outfile dist/kicadiff",
+    "build:bun:linux-x64": "node scripts/embed-viewer.mjs && bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/kicadiff-linux-x64",
+    "build:bun:linux-arm64": "node scripts/embed-viewer.mjs && bun build --compile --target=bun-linux-arm64 src/index.ts --outfile dist/kicadiff-linux-arm64",
+    "build:bun:darwin-arm64": "node scripts/embed-viewer.mjs && bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/kicadiff-darwin-arm64",
+    "build:bun:darwin-x64": "node scripts/embed-viewer.mjs && bun build --compile --target=bun-darwin-x64 src/index.ts --outfile dist/kicadiff-darwin-x64",
     "build:bun:all": "pnpm run build:bun:linux-x64 && pnpm run build:bun:linux-arm64 && pnpm run build:bun:darwin-arm64 && pnpm run build:bun:darwin-x64"
   },
   "keywords": [
