@@ -15,7 +15,7 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { renderProject, printProjectSummary, resolveInputs } from "./render.ts";
+import { renderProject, printProjectSummary, resolveInputs, resolveOutputPath } from "./render.ts";
 import type { LogLevel, ProjectRenderResult } from "./render.ts";
 import { textDiff, markdownDiff } from "./textdiff.ts";
 import type { FileType } from "./types.ts";
@@ -508,7 +508,7 @@ function emitMarkdownReport(parsed: ParsedArgs, project: ProjectRenderResult): v
   const outDir = project.results[0]?.outputDir ?? process.cwd();
   const safeName = projectSafeNameFromResults(project);
   const mdPath = outArg
-    ? path.resolve(outArg)
+    ? resolveOutputPath(outArg, `${safeName}_diff.md`)
     : path.join(outDir, `${safeName}_diff.md`);
   fs.mkdirSync(path.dirname(mdPath), { recursive: true });
   fs.writeFileSync(mdPath, buildMarkdownReport(parsed, project, path.dirname(mdPath)));

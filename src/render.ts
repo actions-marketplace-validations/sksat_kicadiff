@@ -489,6 +489,25 @@ async function renderFootprint(
 }
 
 // =============================================================================
+// Output path resolution
+// =============================================================================
+
+/** Resolve `--output <arg>` to an absolute file path. If `arg` points at an
+ *  existing directory, or ends with a path separator, treat it as a directory
+ *  and append `defaultName` inside; otherwise treat it as a file path. The
+ *  trailing-separator branch lets users say `--output ./reports/` even when
+ *  the directory does not yet exist (we mkdir later). */
+export function resolveOutputPath(arg: string, defaultName: string): string {
+  const looksLikeDir = arg.endsWith("/") || arg.endsWith(path.sep);
+  const resolved = path.resolve(arg);
+  let isDir = looksLikeDir;
+  if (!isDir) {
+    try { isDir = fs.statSync(resolved).isDirectory(); } catch { /* missing → treat as file */ }
+  }
+  return isDir ? path.join(resolved, defaultName) : resolved;
+}
+
+// =============================================================================
 // Manifest construction
 // =============================================================================
 
@@ -1045,7 +1064,7 @@ export async function renderProject(opts: ProjectRenderOptions): Promise<Project
   const outDir = results[0].outputDir;
   const safeName = projectSafeName(files);
   const combinedHtml = opts.outputHtml
-    ? path.resolve(opts.outputHtml)
+    ? resolveOutputPath(opts.outputHtml, `${safeName}_diff.html`)
     : path.join(outDir, `${safeName}_diff.html`);
 
   // Ensure the parent directory of the HTML exists

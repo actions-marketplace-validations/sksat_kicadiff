@@ -527,6 +527,29 @@ test.describe("--output flag", () => {
     runCli([PCB_FILE, "--output-dir", outputDir, "-o", htmlPath]);
     expect(fs.existsSync(htmlPath)).toBe(true);
   });
+
+  test("accepts a directory and uses the default filename inside it", () => {
+    // An existing directory: HTML should land at <dir>/<safe>_diff.html
+    const dir = path.join(outputDir, "into-dir");
+    fs.mkdirSync(dir);
+    runCli([PCB_FILE, "--output-dir", outputDir, "--output", dir]);
+    expect(fs.existsSync(path.join(dir, PROJECT_HTML))).toBe(true);
+  });
+
+  test("trailing slash is treated as a directory even if it doesn't exist yet", () => {
+    // Non-existent path with trailing slash: kicadiff should mkdir and use default name
+    const dir = path.join(outputDir, "new-dir/");
+    runCli([PCB_FILE, "--output-dir", outputDir, "--output", dir]);
+    expect(fs.existsSync(path.join(dir, PROJECT_HTML))).toBe(true);
+  });
+
+  test("--md --output <dir> writes <safe>_diff.md inside the directory", () => {
+    const dir = path.join(outputDir, "md-dir");
+    fs.mkdirSync(dir);
+    runCli([PCB_FILE, "--output-dir", outputDir, "--md", "--output", dir]);
+    const expected = PROJECT_HTML.replace(/_diff\.html$/, "_diff.md");
+    expect(fs.existsSync(path.join(dir, expected))).toBe(true);
+  });
 });
 
 // =============================================================================
