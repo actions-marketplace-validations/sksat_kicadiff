@@ -1,10 +1,17 @@
 import { execSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Playwright global setup: generate test fixtures using kicadiff CLI
- * against the PicoBridge PCB file (and schematic if present).
+ * Playwright global setup: generate test fixtures using kicadiff CLI.
+ *
+ * Generates THREE fixture sets so each viewer test can target what it needs:
+ *   - test/fixtures/combined/  : default mode (both PCB + sch in one HTML)
+ *   - test/fixtures/pcb/       : pcb subcommand (PCB only)
+ *   - test/fixtures/sch/       : sch subcommand (schematic only)
  */
 export default function globalSetup() {
   const projectDir = path.resolve(__dirname, "..");
@@ -12,24 +19,34 @@ export default function globalSetup() {
   const fixtureDir = path.join(projectDir, "test", "fixtures");
   const kicadCli = path.join(projectDir, "kicadiff");
 
-  const pcbFile = path.join(repoRoot, "PicoBridge", "pcb", "PicoBridge.kicad_pcb");
+  const projectFile = path.join(repoRoot, "PicoBridge", "pcb", "PicoBridge.kicad_pcb");
   const schFile = path.join(repoRoot, "PicoBridge", "pcb", "PicoBridge.kicad_sch");
 
-  if (!fs.existsSync(pcbFile)) {
-    console.log("Skipping fixture generation: KiCad file not found at", pcbFile);
+  if (!fs.existsSync(projectFile)) {
+    console.log("Skipping fixture generation: KiCad file not found at", projectFile);
     return;
   }
 
-  console.log("Generating PCB fixtures...");
-  execSync(`bash "${kicadCli}" pcb "${pcbFile}" --output-dir "${fixtureDir}"`, {
+  // Combined mode (no subcommand) — picks up both files when both exist
+  console.log("Generating combined fixtures...");
+  execSync(`"${kicadCli}" "${projectFile}" --output-dir "${path.join(fixtureDir, "combined")}"`, {
+    cwd: repoRoot,
+    stdio: "pipe",
+    timeout: 90000,
+  });
+
+  // PCB-only fixture
+  console.log("Generating PCB-only fixtures...");
+  execSync(`"${kicadCli}" pcb "${projectFile}" --output-dir "${path.join(fixtureDir, "pcb")}"`, {
     cwd: repoRoot,
     stdio: "pipe",
     timeout: 60000,
   });
 
+  // Schematic-only fixture (skip if no .kicad_sch)
   if (fs.existsSync(schFile)) {
-    console.log("Generating schematic fixtures...");
-    execSync(`bash "${kicadCli}" sch "${schFile}" --output-dir "${fixtureDir}"`, {
+    console.log("Generating schematic-only fixtures...");
+    execSync(`"${kicadCli}" sch "${schFile}" --output-dir "${path.join(fixtureDir, "sch")}"`, {
       cwd: repoRoot,
       stdio: "pipe",
       timeout: 60000,

@@ -3,6 +3,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Integration tests for the kicadiff CLI.
@@ -13,17 +16,22 @@ import * as path from "node:path";
 const PROJECT_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(PROJECT_DIR, "..");
 const CLI = path.join(PROJECT_DIR, "kicadiff");
-const PCB_FILE = path.join(REPO_ROOT, "PicoBridge/pcb/PicoBridge.kicad_pcb");
-const SCH_FILE = path.join(REPO_ROOT, "PicoBridge/pcb/PicoBridge.kicad_sch");
+const PROJECT_FIXTURE_DIR = path.join(REPO_ROOT, "PicoBridge/pcb");
+const PCB_FILE = path.join(PROJECT_FIXTURE_DIR, "PicoBridge.kicad_pcb");
+const SCH_FILE = path.join(PROJECT_FIXTURE_DIR, "PicoBridge.kicad_sch");
+const PRO_FILE = path.join(PROJECT_FIXTURE_DIR, "PicoBridge.kicad_pro");
 const SAFE_PCB = "PicoBridge_pcb_PicoBridge.kicad_pcb";
 const SAFE_SCH = "PicoBridge_pcb_PicoBridge.kicad_sch";
+const PROJECT_HTML = "PicoBridge_diff.html"; // combined HTML name from projectSafeName
 
-/** Run kicadiff CLI and return its exit code, capturing stderr for diagnostics. */
+/** Run kicadiff CLI and return its exit code, capturing stderr for diagnostics.
+ *  CLI is a symlink to src/index.ts with `#!/usr/bin/env node` shebang —
+ *  Node 25+ runs TS directly. */
 function runCli(
   args: string[],
   options: { allowFailure?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): { status: number; stderr: string } {
-  const r = spawnSync("bash", [CLI, ...args], {
+  const r = spawnSync(CLI, args, {
     cwd: REPO_ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -142,7 +150,7 @@ test.describe("PCB rendering", () => {
 test.describe("HTML output", () => {
   test("generates diff HTML that contains MANIFEST and viewer content", () => {
     runCli([PCB_FILE, "--output-dir", outputDir]);
-    const htmlPath = path.join(outputDir, `${SAFE_PCB}_diff.html`);
+    const htmlPath = path.join(outputDir, PROJECT_HTML);
     expect(fs.existsSync(htmlPath)).toBe(true);
     const html = fs.readFileSync(htmlPath, "utf8");
     expect(html).toContain("window.MANIFEST");
@@ -150,16 +158,18 @@ test.describe("HTML output", () => {
   });
 
   test("manifest has required keys for PCB", () => {
-    runCli([PCB_FILE, "--output-dir", outputDir]);
-    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
-    expect(m.file).toBeTruthy();
-    expect(m.type).toBe("pcb");
-    expect(m.hasBefore).toBe(true);
-    expect(m.after?.combined).toBeTruthy();
-    expect(Object.keys(m.after?.layers ?? {})).toHaveLength(5);
-    expect(m.before?.combined).toBeTruthy();
-    expect(Object.keys(m.before?.layers ?? {})).toHaveLength(5);
-    expect(m.diff).toBeTruthy();
+    runCli(["pcb", PCB_FILE, "--output-dir", outputDir]);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    expect(m.files).toHaveLength(1);
+    const pcb = m.files[0];
+    expect(pcb.file).toBeTruthy();
+    expect(pcb.type).toBe("pcb");
+    expect(pcb.hasBefore).toBe(true);
+    expect(pcb.after?.combined).toBeTruthy();
+    expect(Object.keys(pcb.after?.layers ?? {})).toHaveLength(5);
+    expect(pcb.before?.combined).toBeTruthy();
+    expect(Object.keys(pcb.before?.layers ?? {})).toHaveLength(5);
+    expect(pcb.diff).toBeTruthy();
   });
 });
 
@@ -179,7 +189,7 @@ test.describe("CLI argument handling", () => {
     const customDir = fs.mkdtempSync(path.join(os.tmpdir(), "kicadiff-custom-"));
     try {
       runCli([PCB_FILE, "--output-dir", customDir]);
-      expect(fs.existsSync(path.join(customDir, `${SAFE_PCB}_diff.html`))).toBe(true);
+      expect(fs.existsSync(path.join(customDir, PROJECT_HTML))).toBe(true);
     } finally {
       fs.rmSync(customDir, { recursive: true, force: true });
     }
@@ -196,10 +206,21 @@ test.describe("CLI argument handling", () => {
     expect(r.status).not.toBe(0);
   });
 
+  test("`schematic` is an alias for `sch`", () => {
+    if (!fs.existsSync(SCH_FILE)) test.skip();
+    runCli(["schematic", SCH_FILE, "--output-dir", outputDir]);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_SCH}.png`))).toBe(true);
+  });
+
+  test("`schematic` alias rejects .kicad_pcb", () => {
+    const r = runCli(["schematic", PCB_FILE, "--output-dir", outputDir], { allowFailure: true });
+    expect(r.status).not.toBe(0);
+  });
+
   test("--images-only skips HTML generation", () => {
     runCli([PCB_FILE, "--output-dir", outputDir, "--images-only"]);
     expect(fs.existsSync(path.join(outputDir, `after/${SAFE_PCB}.png`))).toBe(true);
-    expect(fs.existsSync(path.join(outputDir, `${SAFE_PCB}_diff.html`))).toBe(false);
+    expect(fs.existsSync(path.join(outputDir, PROJECT_HTML))).toBe(false);
   });
 });
 
@@ -213,13 +234,13 @@ test.describe("Schematic rendering", () => {
     runCli(["sch", SCH_FILE, "--output-dir", outputDir]);
 
     const png = path.join(outputDir, `after/${SAFE_SCH}.png`);
-    const html = path.join(outputDir, `${SAFE_SCH}_diff.html`);
+    const html = path.join(outputDir, PROJECT_HTML);
     expect(fs.existsSync(png)).toBe(true);
     expect(fs.statSync(png).size).toBeGreaterThan(0);
     expect(fs.existsSync(html)).toBe(true);
 
     const m = readManifest(html) as any;
-    expect(m.type).toBe("sch");
+    expect(m.files[0].type).toBe("sch");
   });
 });
 
@@ -236,8 +257,8 @@ test.describe("Git ref handling", () => {
 
   test("explicit --from HEAD produces same result as default", () => {
     runCli([PCB_FILE, "--from", "HEAD", "--output-dir", outputDir]);
-    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
-    expect(m.hasBefore).toBe(true);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    expect(m.files.every((f: any) => f.hasBefore === true)).toBe(true);
   });
 });
 
@@ -248,28 +269,28 @@ test.describe("Git ref handling", () => {
 test.describe("git diff compatible CLI", () => {
   test("single positional ref: `kicadiff <ref> <file>`", () => {
     runCli(["HEAD", PCB_FILE, "--output-dir", outputDir]);
-    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
-    expect(m.hasBefore).toBe(true);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    expect(m.files.every((f: any) => f.hasBefore === true)).toBe(true);
   });
 
   test("two positional refs: `kicadiff <r1> <r2> <file>`", () => {
     runCli(["HEAD", "HEAD", PCB_FILE, "--output-dir", outputDir]);
-    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
     // Both sides rendered from HEAD — should match
-    expect(m.hasBefore).toBe(true);
+    expect(m.files.every((f: any) => f.hasBefore === true)).toBe(true);
   });
 
   test("`..` range syntax: `kicadiff <r1>..<r2> <file>`", () => {
     runCli(["HEAD..HEAD", PCB_FILE, "--output-dir", outputDir]);
-    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
-    expect(m.hasBefore).toBe(true);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    expect(m.files.every((f: any) => f.hasBefore === true)).toBe(true);
   });
 
   test("`--` separator: `kicadiff <ref> -- <file>`", () => {
     // Flags must come before `--` (everything after `--` is a path)
     runCli(["--output-dir", outputDir, "HEAD", "--", PCB_FILE]);
-    const m = readManifest(path.join(outputDir, `${SAFE_PCB}_diff.html`)) as any;
-    expect(m.hasBefore).toBe(true);
+    const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
+    expect(m.files.every((f: any) => f.hasBefore === true)).toBe(true);
   });
 
   test("rejects three positional refs", () => {
@@ -309,7 +330,7 @@ test.describe("auto-open behavior", () => {
       env: { ...process.env, KICADIFF_OPEN_CMD: script },
     });
     expect(fs.existsSync(log)).toBe(true);
-    expect(fs.readFileSync(log, "utf8")).toContain(`${SAFE_PCB}_diff.html`);
+    expect(fs.readFileSync(log, "utf8")).toContain(PROJECT_HTML);
   });
 
   test("--open vscode is parsed as a known target", () => {
@@ -342,6 +363,57 @@ test.describe("auto-open behavior", () => {
       env: { ...process.env, KICADIFF_OPEN_CMD: script },
     });
     expect(fs.existsSync(log)).toBe(false);
-    expect(fs.existsSync(path.join(outputDir, `${SAFE_PCB}_diff.html`))).toBe(false);
+    expect(fs.existsSync(path.join(outputDir, PROJECT_HTML))).toBe(false);
+  });
+});
+
+// =============================================================================
+// Combined mode: render both PCB and schematic together when no subcommand
+// =============================================================================
+
+test.describe("combined PCB + schematic", () => {
+  test("project directory input renders both files", () => {
+    runCli([PROJECT_FIXTURE_DIR, "--output-dir", outputDir]);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_PCB}.png`))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_SCH}.png`))).toBe(true);
+  });
+
+  test("`.kicad_pro` input renders both siblings", () => {
+    if (!fs.existsSync(PRO_FILE)) test.skip();
+    runCli([PRO_FILE, "--output-dir", outputDir]);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_PCB}.png`))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_SCH}.png`))).toBe(true);
+  });
+
+  test("single .kicad_pcb auto-includes sibling .kicad_sch", () => {
+    runCli([PCB_FILE, "--output-dir", outputDir]);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_PCB}.png`))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_SCH}.png`))).toBe(true);
+  });
+
+  test("`pcb` subcommand scopes to PCB only (no sch rendered)", () => {
+    runCli(["pcb", PCB_FILE, "--output-dir", outputDir]);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_PCB}.png`))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_SCH}.png`))).toBe(false);
+  });
+
+  test("`sch` subcommand scopes to schematic only (no pcb rendered)", () => {
+    runCli(["sch", SCH_FILE, "--output-dir", outputDir]);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_SCH}.png`))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, `after/${SAFE_PCB}.png`))).toBe(false);
+  });
+
+  test("combined HTML manifest contains files array with both entries", () => {
+    runCli([PROJECT_FIXTURE_DIR, "--output-dir", outputDir]);
+    // Find any *_diff.html in the output (project-level entry)
+    const htmls = fs.readdirSync(outputDir).filter(f => f.endsWith("_diff.html"));
+    expect(htmls.length).toBeGreaterThan(0);
+    const html = fs.readFileSync(path.join(outputDir, htmls[0]), "utf8");
+    const m = html.match(/window\.MANIFEST = (\{.*?\});<\/script>/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(m![1]);
+    expect(Array.isArray(parsed.files)).toBe(true);
+    const types = parsed.files.map((f: any) => f.type).sort();
+    expect(types).toEqual(["pcb", "sch"]);
   });
 });

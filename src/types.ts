@@ -12,7 +12,10 @@ export interface SideManifest {
   layers?: Record<string, string>;
 }
 
-export interface Manifest {
+/** A single rendered file (PCB or schematic). Embedded in the viewer as either
+ *  `window.MANIFEST` directly (single-file mode) or as one entry of
+ *  `window.MANIFEST.files` (combined project mode). */
+export interface FileManifest {
   /** Original file path (relative to repo root if available) */
   file: string;
   /** File type — pcb or sch */
@@ -24,4 +27,14 @@ export interface Manifest {
   /** Diff highlight image (ImageMagick compare output), present only if both
    *  before and after were rendered and ImageMagick is available */
   diff?: string;
+}
+
+/** Backward-compat alias used by older single-file callers. */
+export type Manifest = FileManifest;
+
+/** Combined manifest used when rendering multiple files (e.g. PCB + schematic
+ *  of the same project). The viewer shows top-level tabs to switch between
+ *  files, each containing the existing UI (view modes, layer panel, etc.). */
+export interface ProjectManifest {
+  files: FileManifest[];
 }

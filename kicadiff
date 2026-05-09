@@ -1,7 +1,1 @@
-#!/usr/bin/env bash
-# kicadiff — Visual diff for KiCad files (TypeScript implementation)
-# This thin wrapper invokes the TS implementation via tsx.
-# All logic lives in src/index.ts.
-set -euo pipefail
-DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$DIR/node_modules/.bin/tsx" "$DIR/src/index.ts" "$@"
+src/index.ts

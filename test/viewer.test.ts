@@ -1,12 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 import * as path from "path";
 import * as fs from "fs";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FIXTURE_DIR = path.resolve(__dirname, "fixtures");
-const DIFF_HTML = path.join(
-  FIXTURE_DIR,
-  "PicoBridge_pcb_PicoBridge.kicad_pcb_diff.html"
-);
+// Use the PCB-only fixture so the layer panel and PCB-specific UI is shown
+const DIFF_HTML = path.join(FIXTURE_DIR, "pcb", "PicoBridge_diff.html");
 
 // Skip all tests if fixtures are not generated (e.g. CI without KiCad)
 test.skip(() => !fs.existsSync(DIFF_HTML), "fixture not found");

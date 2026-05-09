@@ -11,7 +11,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import which from "which";
-import type { FileType, Manifest, SideManifest } from "./types.ts";
+import type { FileType, FileManifest, Manifest, ProjectManifest, SideManifest } from "./types.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,20 +69,26 @@ function checkDependencies(): void {
   }
 }
 
-/** Run a command, capturing stderr for error messages, suppressing stdout. */
-function run(cmd: string, args: string[]): void {
-  const r = spawnSync(cmd, args, { stdio: ["ignore", "ignore", "inherit"] });
-  if (r.status !== 0) {
-    throw new Error(
-      `${cmd} failed (exit ${r.status}): ${args.join(" ")}`
-    );
-  }
+/** Run a command async, throwing on non-zero exit. stderr is inherited so
+ *  diagnostics surface. Suitable for Promise.all parallelization. */
+function run(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "inherit"] });
+    child.on("error", reject);
+    child.on("close", code => {
+      if (code === 0) resolve();
+      else reject(new Error(`${cmd} failed (exit ${code}): ${args.join(" ")}`));
+    });
+  });
 }
 
-/** Run a command, ignoring failures (used for optional tools like ImageMagick). */
-function tryRun(cmd: string, args: string[]): boolean {
-  const r = spawnSync(cmd, args, { stdio: ["ignore", "ignore", "ignore"] });
-  return r.status === 0;
+/** Run a command async, ignoring failures (used for optional tools). */
+function tryRun(cmd: string, args: string[]): Promise<boolean> {
+  return new Promise(resolve => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "ignore"] });
+    child.on("error", () => resolve(false));
+    child.on("close", code => resolve(code === 0));
+  });
 }
 
 /** Sanitize a path into an allowlisted filename. */
@@ -126,8 +132,8 @@ function makeTempBeside(nearFile: string): string {
 // Rendering primitives
 // =============================================================================
 
-function renderPcbCombined(input: string, outputSvg: string): void {
-  run("kicad-cli", [
+async function renderPcbCombined(input: string, outputSvg: string): Promise<void> {
+  await run("kicad-cli", [
     "pcb", "export", "svg",
     "--mode-single",
     "--layers", PCB_LAYERS,
@@ -138,9 +144,9 @@ function renderPcbCombined(input: string, outputSvg: string): void {
   ]);
 }
 
-function renderPcbLayers(input: string, outputDir: string): void {
+async function renderPcbLayers(input: string, outputDir: string): Promise<void> {
   fs.mkdirSync(outputDir, { recursive: true });
-  run("kicad-cli", [
+  await run("kicad-cli", [
     "pcb", "export", "svg",
     "--mode-multi",
     "--layers", PCB_LAYERS,
@@ -149,18 +155,20 @@ function renderPcbLayers(input: string, outputDir: string): void {
     "-o", `${outputDir}/`,
     input,
   ]);
-  // Convert each generated SVG to PNG (preserving alpha)
-  for (const f of fs.readdirSync(outputDir)) {
-    if (!f.endsWith(".svg")) continue;
-    const svg = path.join(outputDir, f);
-    const png = svg.replace(/\.svg$/, ".png");
-    run("rsvg-convert", ["-w", "1600", svg, "-o", png]);
-  }
+  // Convert each generated SVG to PNG in parallel (preserves alpha)
+  const conversions = fs.readdirSync(outputDir)
+    .filter(f => f.endsWith(".svg"))
+    .map(f => {
+      const svg = path.join(outputDir, f);
+      const png = svg.replace(/\.svg$/, ".png");
+      return run("rsvg-convert", ["-w", "1600", svg, "-o", png]);
+    });
+  await Promise.all(conversions);
 }
 
-function renderSch(input: string, outputDir: string, outputSvg: string): void {
+async function renderSch(input: string, outputDir: string, outputSvg: string): Promise<void> {
   fs.mkdirSync(outputDir, { recursive: true });
-  run("kicad-cli", [
+  await run("kicad-cli", [
     "sch", "export", "svg",
     "--exclude-drawing-sheet",
     "--no-background-color",
@@ -175,9 +183,9 @@ function renderSch(input: string, outputDir: string, outputSvg: string): void {
   }
 }
 
-function svgToPng(svg: string, png: string): void {
+async function svgToPng(svg: string, png: string): Promise<void> {
   if (fs.existsSync(svg)) {
-    run("rsvg-convert", ["-w", "1600", svg, "-o", png]);
+    await run("rsvg-convert", ["-w", "1600", svg, "-o", png]);
   }
 }
 
@@ -227,17 +235,31 @@ function buildManifest(args: {
 
 /** Inject the manifest into viewer.html as a <script> tag.
  *  </script> in JSON is escaped to prevent breaking out of the script tag. */
-function buildHtml(viewerPath: string, manifest: Manifest): string {
+/** Read viewer.html content. In dev (Node) we read from disk so edits are
+ *  picked up immediately; in a `bun build --compile` binary the file lives
+ *  next to the executable, so we look there as a fallback. */
+function readViewerHtml(): string {
+  const candidates = [
+    path.resolve(__dirname, "..", "viewer.html"),         // dev: kicadiff/viewer.html
+    path.resolve(__dirname, "viewer.html"),               // bun: same dir as binary
+    path.resolve(process.cwd(), "viewer.html"),           // last resort
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return fs.readFileSync(p, "utf8");
+  }
+  throw new Error("viewer.html not found in any of: " + candidates.join(", "));
+}
+
+function buildHtml(_viewerPath: string, manifest: Manifest): string {
   const json = JSON.stringify(manifest).replace(/<\//g, "<\\/");
-  const viewerContent = fs.readFileSync(viewerPath, "utf8");
-  return `<script>window.MANIFEST = ${json};</script>\n${viewerContent}`;
+  return `<script>window.MANIFEST = ${json};</script>\n${readViewerHtml()}`;
 }
 
 // =============================================================================
 // Main entry
 // =============================================================================
 
-export function render(opts: RenderOptions): RenderResult {
+export async function render(opts: RenderOptions): Promise<RenderResult> {
   checkDependencies();
 
   // --- Resolve absolute file path ---
@@ -280,22 +302,31 @@ export function render(opts: RenderOptions): RenderResult {
   const isWorkingTree = (ref: string) => ref === "" || ref === "working";
 
   /** Render one side. If `ref` is working tree, render filePath directly.
-   *  Otherwise extract from git into a temp file and render that. */
-  function renderSide(
+   *  Otherwise extract from git into a temp file and render that.
+   *  For PCB, the combined and per-layer kicad-cli calls run in parallel. */
+  async function renderSide(
     ref: string,
     side: "before" | "after",
     targetSvg: string,
     targetPng: string,
-  ): boolean {
+  ): Promise<boolean> {
     const layersDir = path.join(outputDir, `${side}/layers_${safe}`);
-    if (isWorkingTree(ref)) {
+
+    async function renderFromSource(src: string): Promise<void> {
       if (fileType === "pcb") {
-        renderPcbCombined(filePath, targetSvg);
-        renderPcbLayers(filePath, layersDir);
+        // Combined and layered exports are independent → run in parallel
+        await Promise.all([
+          renderPcbCombined(src, targetSvg),
+          renderPcbLayers(src, layersDir),
+        ]);
       } else {
-        renderSch(filePath, path.join(outputDir, side), targetSvg);
+        await renderSch(src, path.join(outputDir, side), targetSvg);
       }
-      svgToPng(targetSvg, targetPng);
+      await svgToPng(targetSvg, targetPng);
+    }
+
+    if (isWorkingTree(ref)) {
+      await renderFromSource(filePath);
       return fs.existsSync(targetPng);
     }
     if (!repoRoot || !gitHasFileAtRef(repoRoot, ref, relPath)) return false;
@@ -303,25 +334,20 @@ export function render(opts: RenderOptions): RenderResult {
     try {
       tempFile = makeTempBeside(filePath);
       gitShowToFile(repoRoot, ref, relPath, tempFile);
-      if (fileType === "pcb") {
-        renderPcbCombined(tempFile, targetSvg);
-        renderPcbLayers(tempFile, layersDir);
-      } else {
-        renderSch(tempFile, path.join(outputDir, side), targetSvg);
-      }
-      svgToPng(targetSvg, targetPng);
+      await renderFromSource(tempFile);
       return fs.existsSync(targetPng);
     } finally {
       if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     }
   }
 
-  // --- Render after (target) ---
-  const afterOk = renderSide(toRef, "after", afterSvg, afterPng);
+  // --- Render after (target) and before (base) in parallel ---
+  // Each side runs combined||layers internally for further speedup.
+  const [afterOk, hasBefore] = await Promise.all([
+    renderSide(toRef, "after", afterSvg, afterPng),
+    renderSide(fromRef, "before", beforeSvg, beforePng),
+  ]);
   if (!afterOk) throw new Error(`failed to render after side (ref="${toRef}")`);
-
-  // --- Render before (base) ---
-  const hasBefore = renderSide(fromRef, "before", beforeSvg, beforePng);
 
   // --- Diff highlight (optional, requires ImageMagick) ---
   let diffPng: string | undefined;
@@ -329,7 +355,7 @@ export function render(opts: RenderOptions): RenderResult {
     const diffDir = path.join(outputDir, "diff");
     fs.mkdirSync(diffDir, { recursive: true });
     diffPng = path.join(diffDir, `${safe}.png`);
-    tryRun("magick", [
+    await tryRun("magick", [
       "compare", "-fuzz", "5%",
       "-highlight-color", "#ff000088",
       "-lowlight-color", "transparent",
@@ -406,6 +432,150 @@ function openInEditor(htmlPath: string, target: string): void {
   }
   const child = spawn(cmd, args, { stdio: "ignore", detached: true });
   child.unref();
+}
+
+// =============================================================================
+// Project-level rendering (combined PCB + schematic)
+// =============================================================================
+
+export interface ProjectRenderOptions {
+  /** Input: directory, .kicad_pro, .kicad_pcb, .kicad_sch, or undefined (=cwd).
+   *  When a directory or .kicad_pro is given, both .kicad_pcb and .kicad_sch
+   *  siblings are picked up. When a single .kicad_{pcb,sch} is given, the
+   *  matching sibling of the other type is also included if it exists. */
+  input?: string;
+  outputDir?: string;
+  fromRef?: string;
+  toRef?: string;
+  imagesOnly?: boolean;
+  open?: string;
+  /** Force single-file mode (set by `pcb`/`sch` subcommand). When set, only
+   *  the file matching the scope is rendered, no sibling auto-detection. */
+  scope?: FileType;
+}
+
+export interface ProjectRenderResult {
+  results: RenderResult[];
+  /** Path to the combined HTML (only present when more than one file rendered
+   *  AND imagesOnly is false). For single-file mode, the per-file HTML in
+   *  the corresponding RenderResult.diffHtml is the entry point. */
+  combinedHtml?: string;
+}
+
+/** Resolve the user's input into a list of KiCad files to render.
+ *  See ProjectRenderOptions.input for accepted formats. */
+export function resolveInputs(
+  rawInput: string | undefined,
+  scope: FileType | undefined,
+): string[] {
+  const input = rawInput ?? process.cwd();
+  const abs = path.isAbsolute(input) ? input : path.resolve(process.cwd(), input);
+
+  if (!fs.existsSync(abs)) {
+    throw new Error(`input not found: ${abs}`);
+  }
+
+  const stat = fs.statSync(abs);
+  let pcb: string | undefined;
+  let sch: string | undefined;
+
+  if (stat.isDirectory()) {
+    // Pick the first .kicad_pcb / .kicad_sch in the directory
+    for (const f of fs.readdirSync(abs).sort()) {
+      const fp = path.join(abs, f);
+      if (!pcb && f.endsWith(".kicad_pcb")) pcb = fp;
+      if (!sch && f.endsWith(".kicad_sch")) sch = fp;
+    }
+  } else if (abs.endsWith(".kicad_pro")) {
+    // Find siblings with the same basename
+    const dir = path.dirname(abs);
+    const base = path.basename(abs, ".kicad_pro");
+    const pcbCandidate = path.join(dir, `${base}.kicad_pcb`);
+    const schCandidate = path.join(dir, `${base}.kicad_sch`);
+    if (fs.existsSync(pcbCandidate)) pcb = pcbCandidate;
+    if (fs.existsSync(schCandidate)) sch = schCandidate;
+  } else if (abs.endsWith(".kicad_pcb")) {
+    pcb = abs;
+    const schCandidate = abs.slice(0, -".kicad_pcb".length) + ".kicad_sch";
+    if (scope === undefined && fs.existsSync(schCandidate)) sch = schCandidate;
+  } else if (abs.endsWith(".kicad_sch")) {
+    sch = abs;
+    const pcbCandidate = abs.slice(0, -".kicad_sch".length) + ".kicad_pcb";
+    if (scope === undefined && fs.existsSync(pcbCandidate)) pcb = pcbCandidate;
+  } else {
+    throw new Error(`unsupported input: ${abs} (expected dir, .kicad_pro, .kicad_pcb, or .kicad_sch)`);
+  }
+
+  // Apply scope filter (subcommand)
+  if (scope === "pcb") sch = undefined;
+  if (scope === "sch") pcb = undefined;
+
+  const result: string[] = [];
+  if (pcb) result.push(pcb);
+  if (sch) result.push(sch);
+  if (result.length === 0) {
+    throw new Error(`no KiCad files found under: ${abs}`);
+  }
+  return result;
+}
+
+/** Render one or more KiCad files and produce a single combined HTML viewer.
+ *  Used as the main entry point — the CLI and Claude Code hook call this.
+ *  Multiple input files are rendered in parallel (PCB and SCH have no
+ *  shared state). Within each file, before|after and combined|layers also
+ *  run in parallel — see render(). */
+export async function renderProject(opts: ProjectRenderOptions): Promise<ProjectRenderResult> {
+  const files = resolveInputs(opts.input, opts.scope);
+  const results: RenderResult[] = await Promise.all(
+    files.map(file =>
+      render({
+        filePath: file,
+        outputDir: opts.outputDir,
+        fromRef: opts.fromRef,
+        toRef: opts.toRef,
+        imagesOnly: true, // we'll generate one combined HTML below
+      }),
+    ),
+  );
+
+  if (opts.imagesOnly) {
+    return { results };
+  }
+
+  // Build a combined manifest and HTML in the shared output directory
+  const outDir = results[0].outputDir;
+  const manifest: ProjectManifest = { files: results.map(r => r.manifest) };
+  const safeName = projectSafeName(files);
+  const combinedHtml = path.join(outDir, `${safeName}_diff.html`);
+  fs.writeFileSync(combinedHtml, buildHtmlFromProject(manifest));
+
+  // Auto-open if requested
+  if (opts.open !== undefined) {
+    openInEditor(combinedHtml, opts.open);
+  }
+
+  // Annotate each result with the combined HTML for CLI display
+  for (const r of results) r.diffHtml = combinedHtml;
+
+  return { results, combinedHtml };
+}
+
+/** Derive a stable filename for the combined HTML based on the input files. */
+function projectSafeName(files: string[]): string {
+  // Use the common basename if all files share one (typical for KiCad projects)
+  const bases = files.map(f => {
+    const name = path.basename(f);
+    return name.replace(/\.kicad_(pcb|sch)$/, "");
+  });
+  const allSame = bases.every(b => b === bases[0]);
+  if (allSame) return bases[0].replace(/[^a-zA-Z0-9._-]/g, "_");
+  // Otherwise concatenate
+  return bases.map(b => b.replace(/[^a-zA-Z0-9._-]/g, "_")).join("__");
+}
+
+function buildHtmlFromProject(manifest: ProjectManifest): string {
+  const json = JSON.stringify(manifest).replace(/<\//g, "<\\/");
+  return `<script>window.MANIFEST = ${json};</script>\n${readViewerHtml()}`;
 }
 
 /** Print a human-readable summary, used by the CLI / Claude Code hook. */

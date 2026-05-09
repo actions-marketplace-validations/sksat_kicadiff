@@ -1,12 +1,13 @@
 import { test, expect } from "@playwright/test";
 import * as path from "path";
 import * as fs from "fs";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FIXTURE_DIR = path.resolve(__dirname, "fixtures");
-const SCH_HTML = path.join(
-  FIXTURE_DIR,
-  "PicoBridge_pcb_PicoBridge.kicad_sch_diff.html"
-);
+// Use the schematic-only fixture so the viewer initializes in sch mode
+const SCH_HTML = path.join(FIXTURE_DIR, "sch", "PicoBridge_diff.html");
 
 test.skip(() => !fs.existsSync(SCH_HTML), "schematic fixture not found");
 
@@ -17,7 +18,7 @@ test.beforeEach(async ({ page }) => {
 
 test.describe("Schematic viewer", () => {
   test("manifest type is sch", async ({ page }) => {
-    const type = await page.evaluate(() => (window as any).MANIFEST.type);
+    const type = await page.evaluate(() => (window as any).MANIFEST.files[0].type);
     expect(type).toBe("sch");
   });
 
@@ -63,7 +64,7 @@ test.describe("Schematic viewer", () => {
   test("diff highlight toggle is available for schematic", async ({ page }) => {
     // Diff highlight should work for schematics too — the toggle must be
     // visible somewhere even though the layer list is not.
-    const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.diff);
+    const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.files[0].diff);
     if (!hasDiff) test.skip();
 
     const diffCheckbox = page.locator('#layer-extras input[type="checkbox"]');
@@ -71,20 +72,21 @@ test.describe("Schematic viewer", () => {
   });
 
   test("toggling diff highlight shows/hides the overlay", async ({ page }) => {
-    const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.diff);
+    const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.files[0].diff);
     if (!hasDiff) test.skip();
 
     const diffCheckbox = page.locator('#layer-extras input[type="checkbox"]');
     const diffOverlay = page.locator('img[data-diff="1"]').first();
 
-    // Initially hidden
-    await expect(diffOverlay).toHaveCSS("display", "none");
-    // Toggle on
-    await diffCheckbox.check();
+    // Default ON: overlay visible, checkbox checked
+    await expect(diffCheckbox).toBeChecked();
     await expect(diffOverlay).not.toHaveCSS("display", "none");
     // Toggle off
     await diffCheckbox.uncheck();
     await expect(diffOverlay).toHaveCSS("display", "none");
+    // Toggle back on
+    await diffCheckbox.check();
+    await expect(diffOverlay).not.toHaveCSS("display", "none");
   });
 
   test("view mode tabs work for schematic", async ({ page }) => {
