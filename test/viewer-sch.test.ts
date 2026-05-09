@@ -21,10 +21,11 @@ test.describe("Schematic viewer", () => {
     expect(type).toBe("sch");
   });
 
-  test("layer panel is hidden for schematic", async ({ page }) => {
-    // Schematics don't have PCB layers — panel should not be displayed
+  test("layer list is hidden for schematic", async ({ page }) => {
+    // Schematics don't have PCB layers — layer list should be hidden,
+    // but the panel itself may be visible to host the diff toggle.
     const display = await page
-      .locator("#layer-panel")
+      .locator("#layer-list")
       .evaluate((el) => getComputedStyle(el).display);
     expect(display).toBe("none");
   });
@@ -57,6 +58,33 @@ test.describe("Schematic viewer", () => {
     expect(r).toBeGreaterThan(230);
     expect(g).toBeGreaterThan(230);
     expect(b).toBeGreaterThan(230);
+  });
+
+  test("diff highlight toggle is available for schematic", async ({ page }) => {
+    // Diff highlight should work for schematics too — the toggle must be
+    // visible somewhere even though the layer list is not.
+    const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.diff);
+    if (!hasDiff) test.skip();
+
+    const diffCheckbox = page.locator('#layer-extras input[type="checkbox"]');
+    await expect(diffCheckbox).toBeVisible();
+  });
+
+  test("toggling diff highlight shows/hides the overlay", async ({ page }) => {
+    const hasDiff = await page.evaluate(() => !!(window as any).MANIFEST.diff);
+    if (!hasDiff) test.skip();
+
+    const diffCheckbox = page.locator('#layer-extras input[type="checkbox"]');
+    const diffOverlay = page.locator('img[data-diff="1"]').first();
+
+    // Initially hidden
+    await expect(diffOverlay).toHaveCSS("display", "none");
+    // Toggle on
+    await diffCheckbox.check();
+    await expect(diffOverlay).not.toHaveCSS("display", "none");
+    // Toggle off
+    await diffCheckbox.uncheck();
+    await expect(diffOverlay).toHaveCSS("display", "none");
   });
 
   test("view mode tabs work for schematic", async ({ page }) => {

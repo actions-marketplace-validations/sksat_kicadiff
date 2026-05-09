@@ -171,15 +171,23 @@ function buildTabs() {
   });
 }
 
-/* Layer panel: KiCad/Photoshop-style layer list.
-   - Eye icon click: toggles visibility (independent of selection)
-   - Row click: selects as active layer (rendered on top, same opacity) */
+/* Options panel: shows layer list (PCB only) and diff highlight toggle.
+   PCB: KiCad/Photoshop-style layer list with eye icons + active selection
+   Schematic: only the diff toggle is shown (no layer concept)
+   Hidden entirely if neither layers nor diff are available. */
 function buildLayerPanel() {
-  if (M.type !== 'pcb' || !M.after.layers) return;
+  const hasLayers = M.type === 'pcb' && M.after.layers;
+  const hasDiff = M.diff && M.hasBefore;
+  if (!hasLayers && !hasDiff) return;
+
   const panel = $('#layer-panel');
   panel.style.display = 'flex';
   const list = $('#layer-list');
-  const available = LAYER_ORDER.filter(n => M.after.layers[n]);
+
+  // Hide the layer list entirely for schematics (no layers to show)
+  if (!hasLayers) list.style.display = 'none';
+
+  const available = hasLayers ? LAYER_ORDER.filter(n => M.after.layers[n]) : [];
 
   available.forEach(name => {
     layerVisible[name] = true;
@@ -218,14 +226,16 @@ function buildLayerPanel() {
     list.appendChild(row);
   });
 
-  // Default active layer
-  activeLayer = 'F.Cu';
-  const defaultRow = list.querySelector('[data-layer="F.Cu"]');
-  if (defaultRow) defaultRow.classList.add('active');
+  // Default active layer (PCB only)
+  if (hasLayers) {
+    activeLayer = 'F.Cu';
+    const defaultRow = list.querySelector('[data-layer="F.Cu"]');
+    if (defaultRow) defaultRow.classList.add('active');
+  }
 
-  // Diff highlight toggle
+  // Diff highlight toggle (works for both PCB and schematic)
   const extras = $('#layer-extras');
-  if (M.diff && M.hasBefore) {
+  if (hasDiff) {
     const diffLbl = document.createElement('label');
     const diffCb = document.createElement('input');
     diffCb.type = 'checkbox';

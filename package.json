@@ -7,8 +7,7 @@
   },
   "scripts": {
     "test": "playwright test",
-    "test:render": "bash test/render.test.sh",
-    "test:all": "bash test/render.test.sh && playwright test"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "kicad",
@@ -22,6 +21,12 @@
   "packageManager": "pnpm@10.15.0",
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@types/node": "^25.6.2",
+    "@types/which": "^3.0.4",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "which": "^7.0.0"
   }
 }
