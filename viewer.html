@@ -338,12 +338,13 @@ window.addEventListener('hashchange', () => {
 
 function buildTabs() {
   const tabs = $('#view-tabs');
-  // Overlay is the default and goes leftmost when a before-state exists —
-  // it's the most commonly useful comparison mode for spotting changes.
-  // Side-by-side has no before requirement so it's the only mode for new files.
-  const modes = M.hasBefore
-    ? [['ovl','Overlay'],['sbs','Side by Side'],['swp','Swipe']]
-    : [['sbs','Side by Side']];
+  // All three view modes are always available. Without a before-state to
+  // compare to, each mode collapses to "just show the rendered image" — the
+  // tabs stay so the file's UI is consistent across files (e.g. switching
+  // file-tabs from a diff'd file to a new file doesn't yank the controls).
+  // Overlay is the default and leftmost — it's the most useful for spotting
+  // changes when before is present.
+  const modes = [['ovl','Overlay'],['sbs','Side by Side'],['swp','Swipe']];
   modes.forEach(([id, label]) => {
     const btn = document.createElement('button');
     btn.textContent = label;
@@ -462,60 +463,75 @@ function buildViews() {
     syncScroll([...paneBodies]);
   }
 
-  if (!M.hasBefore) return;
-
-  // Overlay: controls bar at top, scrollable image body below
+  // Overlay: with before → before+after stacked + opacity slider.
+  //          without before → just the after image; the slider/legend would
+  //          have nothing to blend, so we skip the controls bar entirely.
   const ovl = document.createElement('div');
   ovl.id = 'view-ovl'; ovl.className = 'view ovl';
-  const ovlCtrl = document.createElement('div');
-  ovlCtrl.className = 'ovl-controls';
-  ovlCtrl.innerHTML = '<span class="lbl-before">Before</span><input type="range" id="opacity-slider" min="0" max="100" value="100"><span class="lbl-after">After</span>';
-  ovl.appendChild(ovlCtrl);
+  if (M.hasBefore) {
+    const ovlCtrl = document.createElement('div');
+    ovlCtrl.className = 'ovl-controls';
+    ovlCtrl.innerHTML = '<span class="lbl-before">Before</span><input type="range" id="opacity-slider" min="0" max="100" value="100"><span class="lbl-after">After</span>';
+    ovl.appendChild(ovlCtrl);
+  }
   const ovlBody = document.createElement('div');
   ovlBody.className = 'ovl-body';
   const ovlWrap = document.createElement('div');
   ovlWrap.className = 'compare-wrap';
-  ovlWrap.appendChild(makeLayerStack('before', 'ovl-before'));
-  const ovlOver = document.createElement('div');
-  ovlOver.className = 'over-stack'; ovlOver.id = 'ovl-over';
-  ovlOver.appendChild(makeLayerStack('after', 'ovl-after'));
-  ovlWrap.appendChild(ovlOver);
+  if (M.hasBefore) {
+    ovlWrap.appendChild(makeLayerStack('before', 'ovl-before'));
+    const ovlOver = document.createElement('div');
+    ovlOver.className = 'over-stack'; ovlOver.id = 'ovl-over';
+    ovlOver.appendChild(makeLayerStack('after', 'ovl-after'));
+    ovlWrap.appendChild(ovlOver);
+  } else {
+    ovlWrap.appendChild(makeLayerStack('after', 'ovl-after'));
+  }
   ovlBody.appendChild(ovlWrap);
   ovl.appendChild(ovlBody);
   main.appendChild(ovl);
 
-  // Swipe: controls bar + scrollable body + full-height divider
+  // Swipe: with before → before+after with clip-path divider.
+  //        without before → just the after image; no divider/clip.
   const swp = document.createElement('div');
   swp.id = 'view-swp'; swp.className = 'view swp';
-  // Controls bar (matches overlay bar height so images start at same Y)
-  const swpCtrl = document.createElement('div');
-  swpCtrl.className = 'swp-controls';
-  swpCtrl.innerHTML = '<span class="lbl-before">Before</span><span style="flex:1"></span><span class="lbl-after">After</span>';
-  swp.appendChild(swpCtrl);
-  // Scrollable image body
+  if (M.hasBefore) {
+    const swpCtrl = document.createElement('div');
+    swpCtrl.className = 'swp-controls';
+    swpCtrl.innerHTML = '<span class="lbl-before">Before</span><span style="flex:1"></span><span class="lbl-after">After</span>';
+    swp.appendChild(swpCtrl);
+  }
   const swpBody = document.createElement('div');
   swpBody.className = 'swp-body'; swpBody.id = 'swipe-body';
   const swpWrap = document.createElement('div');
   swpWrap.className = 'compare-wrap'; swpWrap.id = 'swipe-wrap';
-  swpWrap.appendChild(makeLayerStack('after', 'swp-after'));
-  const swpOver = document.createElement('div');
-  swpOver.className = 'over-stack'; swpOver.id = 'swp-over';
-  swpOver.appendChild(makeLayerStack('before', 'swp-before'));
-  swpWrap.appendChild(swpOver);
+  if (M.hasBefore) {
+    swpWrap.appendChild(makeLayerStack('after', 'swp-after'));
+    const swpOver = document.createElement('div');
+    swpOver.className = 'over-stack'; swpOver.id = 'swp-over';
+    swpOver.appendChild(makeLayerStack('before', 'swp-before'));
+    swpWrap.appendChild(swpOver);
+  } else {
+    swpWrap.appendChild(makeLayerStack('after', 'swp-after'));
+  }
   swpBody.appendChild(swpWrap);
   swp.appendChild(swpBody);
-  // Divider: direct child of swp view so it spans full height (bar + image)
-  const divider = document.createElement('div');
-  divider.className = 'divider'; divider.id = 'swipe-divider';
-  swp.appendChild(divider);
+  if (M.hasBefore) {
+    const divider = document.createElement('div');
+    divider.className = 'divider'; divider.id = 'swipe-divider';
+    swp.appendChild(divider);
+  }
   main.appendChild(swp);
 
-  // Overlay opacity slider
-  $('#opacity-slider').addEventListener('input', e => {
-    $('#ovl-over').style.opacity = e.target.value / 100;
-  });
-  setupSwipe();
-  attachSwipeScrollHandler();
+  // Wire interactive bits only when before exists — without it, slider/swipe
+  // have nothing to do.
+  if (M.hasBefore) {
+    $('#opacity-slider').addEventListener('input', e => {
+      $('#ovl-over').style.opacity = e.target.value / 100;
+    });
+    setupSwipe();
+    attachSwipeScrollHandler();
+  }
   applyLayers();
 }
 
