@@ -22,12 +22,14 @@ export default function globalSetup() {
   }
 
   const projectDir = path.resolve(__dirname, "..");
-  const repoRoot = path.resolve(projectDir, "..");
   const fixtureDir = path.join(projectDir, "test", "fixtures");
   const kicadCli = path.join(projectDir, "kicadiff");
 
-  const projectFile = path.join(repoRoot, "PicoBridge", "pcb", "PicoBridge.kicad_pcb");
-  const schFile = path.join(repoRoot, "PicoBridge", "pcb", "PicoBridge.kicad_sch");
+  // Self-contained example used as the test fixture. Kept inside the kicadiff
+  // project so tests don't require any sibling repo to be present.
+  const projectFile = path.join(projectDir, "examples", "blink", "blink.kicad_pcb");
+  const schFile = path.join(projectDir, "examples", "blink", "blink.kicad_sch");
+  const repoRoot = path.resolve(projectDir, "..");
 
   if (!fs.existsSync(projectFile)) {
     console.log("Skipping fixture generation: KiCad file not found at", projectFile);

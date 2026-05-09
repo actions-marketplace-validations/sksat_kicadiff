@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FIXTURE_DIR = path.resolve(__dirname, "fixtures");
 // Use the schematic-only fixture so the viewer initializes in sch mode
-const SCH_HTML = path.join(FIXTURE_DIR, "sch", "PicoBridge_diff.html");
+const SCH_HTML = path.join(FIXTURE_DIR, "sch", "blink_diff.html");
 
 test.skip(() => !fs.existsSync(SCH_HTML), "schematic fixture not found");
 

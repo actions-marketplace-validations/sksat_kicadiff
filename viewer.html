@@ -60,7 +60,9 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
    matches the previous layout where the wrap's bounding box was the body
    height, with overflowing image content scrolling. justify-content stays
    at its flex-start default so zoom > 1 leaves scrollbar reach to the
-   image's left edge (justify-content:center would clip pan range). */
+   image's left edge (justify-content:center would clip pan range).
+   Pan is bound to right-click drag (see JS); leaving the cursor at default
+   keeps left-click free for UI interactions. */
 .pane-body{flex:1;overflow:auto;padding:4px;display:flex}
 .pane-body > .layer-stack{width:calc(var(--zoom,1) * 100%);flex-shrink:0}
 
@@ -514,6 +516,54 @@ function onWheel(e) {
 }
 
 document.addEventListener('wheel', onWheel, { passive: false });
+
+/* Right-click drag inside any rendered-image body pans the scrollable area.
+   Right-click is used so left-click stays free for UI interactions (layer
+   rows, swipe divider, etc.). Works in all three view modes — for swipe,
+   the divider's left-click drag and right-click pan coexist without
+   conflict. We track a single panState across the document so the drag
+   continues even if the cursor leaves the originating body. */
+let panState = null;
+
+document.addEventListener('mousedown', e => {
+  if (e.button !== 2) return; // right button only
+  const body = e.target.closest('.pane-body, .ovl-body, .swp-body');
+  if (!body) return;
+  panState = {
+    body,
+    startX: e.clientX,
+    startY: e.clientY,
+    scrollX: body.scrollLeft,
+    scrollY: body.scrollTop,
+    moved: false,
+  };
+  body.style.cursor = 'grabbing';
+  e.preventDefault();
+});
+
+// Suppress the right-click context menu inside rendered bodies — otherwise
+// it pops up on mouseup and obscures the panned content.
+document.addEventListener('contextmenu', e => {
+  if (e.target.closest('.pane-body, .ovl-body, .swp-body')) e.preventDefault();
+});
+
+document.addEventListener('mousemove', e => {
+  if (!panState) return;
+  // Suppress text/image selection during a drag; otherwise fast moves leave
+  // a selection ghost behind the cursor.
+  e.preventDefault();
+  const dx = e.clientX - panState.startX;
+  const dy = e.clientY - panState.startY;
+  if (!panState.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) panState.moved = true;
+  panState.body.scrollLeft = panState.scrollX - dx;
+  panState.body.scrollTop = panState.scrollY - dy;
+});
+
+document.addEventListener('mouseup', () => {
+  if (!panState) return;
+  panState.body.style.cursor = '';
+  panState = null;
+});
 
 /* Render a friendly label for a git ref. Used in pane labels and the
    overlay/swipe legends. Empty/unset toRef means "working tree" (the

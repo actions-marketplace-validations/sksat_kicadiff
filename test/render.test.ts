@@ -16,13 +16,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(PROJECT_DIR, "..");
 const CLI = path.join(PROJECT_DIR, "kicadiff");
-const PROJECT_FIXTURE_DIR = path.join(REPO_ROOT, "PicoBridge/pcb");
-const PCB_FILE = path.join(PROJECT_FIXTURE_DIR, "PicoBridge.kicad_pcb");
-const SCH_FILE = path.join(PROJECT_FIXTURE_DIR, "PicoBridge.kicad_sch");
-const PRO_FILE = path.join(PROJECT_FIXTURE_DIR, "PicoBridge.kicad_pro");
-const SAFE_PCB = "PicoBridge_pcb_PicoBridge.kicad_pcb";
-const SAFE_SCH = "PicoBridge_pcb_PicoBridge.kicad_sch";
-const PROJECT_HTML = "PicoBridge_diff.html"; // combined HTML name from projectSafeName
+// Self-contained example used as the primary test fixture. Lives inside the
+// kicadiff project so tests don't depend on a sibling project (they used to
+// reference ../PicoBridge, which made tests harder to run on a fresh clone).
+const PROJECT_FIXTURE_DIR = path.join(PROJECT_DIR, "examples/blink");
+const PCB_FILE = path.join(PROJECT_FIXTURE_DIR, "blink.kicad_pcb");
+const SCH_FILE = path.join(PROJECT_FIXTURE_DIR, "blink.kicad_sch");
+const PRO_FILE = path.join(PROJECT_FIXTURE_DIR, "blink.kicad_pro");
+const SAFE_PCB = "kicadiff_examples_blink_blink.kicad_pcb";
+const SAFE_SCH = "kicadiff_examples_blink_blink.kicad_sch";
+const PROJECT_HTML = "blink_diff.html"; // combined HTML name from projectSafeName
 
 /** Run kicadiff CLI and return its exit code, capturing stderr for diagnostics.
  *  CLI is a symlink to src/index.ts with `#!/usr/bin/env node` shebang —
@@ -451,8 +454,10 @@ test.describe("hasDiff flag", () => {
       ], { cwd: tmp });
       const schInTmp = path.join(tmp, path.basename(SCH_FILE));
       // Schematic value text IS rendered, so an edit produces a visual diff.
+      // The blink fixture has the resistor value "330" — bumping it changes
+      // the rendered text and therefore the PNG bytes.
       const orig = fs.readFileSync(schInTmp, "utf8");
-      fs.writeFileSync(schInTmp, orig.replace(/100nF/g, "2.2uF"));
+      fs.writeFileSync(schInTmp, orig.replace(/"330"/g, '"470"'));
 
       const r = spawnSync(CLI, ["sch", schInTmp, "--output-dir", outputDir], {
         cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
@@ -480,7 +485,7 @@ test.describe("schematic pages", () => {
     expect(Array.isArray(sch.after.pages)).toBe(true);
     expect(sch.after.pages.length).toBeGreaterThanOrEqual(1);
     // Root page name = schematic basename
-    expect(sch.after.pages[0].name).toBe("PicoBridge");
+    expect(sch.after.pages[0].name).toBe("blink");
   });
 
   test("before- and after-side page names match (stable across temp files)", () => {
@@ -542,7 +547,7 @@ test.describe("--text-only", () => {
   test("prints summary line for PCB and skips HTML/PNG generation", () => {
     const r = runWithStdout(["--text-only", PCB_FILE]);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/PicoBridge\.kicad_pcb \(pcb\): \+\d+ -\d+ ~\d+ =\d+/);
+    expect(r.stdout).toMatch(/blink\.kicad_pcb \(pcb\): \+\d+ -\d+ ~\d+ =\d+/);
     // No images or HTML produced
     expect(fs.existsSync(path.join(outputDir, PROJECT_HTML))).toBe(false);
   });
@@ -559,13 +564,15 @@ test.describe("--text-only", () => {
         "-c", "user.name=t", "commit", "-q", "-m", "init"], { cwd: tmp });
       const pcbInTmp = path.join(tmp, path.basename(PCB_FILE));
       const orig = fs.readFileSync(pcbInTmp, "utf8");
-      fs.writeFileSync(pcbInTmp, orig.replace(/100nF/g, "200nF"));
+      // Resistor R1 in the blink fixture has value "330"; bumping it produces
+      // a structural diff with a single ~ entry on R1.
+      fs.writeFileSync(pcbInTmp, orig.replace(/"330"/g, '"470"'));
 
       const r = spawnSync(CLI, ["--text-only", pcbInTmp], {
         cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
       });
       expect(r.status).toBe(0);
-      expect(r.stdout).toMatch(/~\s*C\d+\s+value: 100nF → 200nF/);
+      expect(r.stdout).toMatch(/~\s*R1\s+value: 330 → 470/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

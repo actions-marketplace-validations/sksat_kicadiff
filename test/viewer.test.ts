@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FIXTURE_DIR = path.resolve(__dirname, "fixtures");
 // Use the PCB-only fixture so the layer panel and PCB-specific UI is shown
-const DIFF_HTML = path.join(FIXTURE_DIR, "pcb", "PicoBridge_diff.html");
+const DIFF_HTML = path.join(FIXTURE_DIR, "pcb", "blink_diff.html");
 
 // Skip all tests if fixtures are not generated (e.g. CI without KiCad)
 test.skip(() => !fs.existsSync(DIFF_HTML), "fixture not found");
@@ -302,45 +302,51 @@ test.describe("Resize", () => {
     // Side-by-side is no longer the default — switch to it explicitly so the
     // panes are display:flex and scroll events fire as expected.
     await page.click('button[data-view="sbs"]');
-    // Small viewport so tall PCB images overflow vertically
+    // Zoom in so the (small) blink fixture overflows vertically. Without
+    // overflow the panes cap scrollTop at 0 and scroll-sync can't be observed.
+    await page.evaluate(() => document.documentElement.style.setProperty("--zoom", "8"));
     await page.setViewportSize({ width: 400, height: 300 });
     await page.waitForTimeout(200);
 
     const beforeBody = page.locator("#view-sbs .pane:first-child .pane-body");
     const afterBody = page.locator("#view-sbs .pane:last-child .pane-body");
 
-    // Scroll "before" pane down
-    await beforeBody.evaluate((el) => {
-      el.scrollTop = 100;
+    // Scroll "before" pane down by half its scrollable range
+    const target = await beforeBody.evaluate((el) => {
+      const t = Math.floor((el.scrollHeight - el.clientHeight) / 2);
+      el.scrollTop = t;
       el.dispatchEvent(new Event("scroll"));
+      return t;
     });
+    expect(target).toBeGreaterThan(0); // ensure overflow exists
     await page.waitForTimeout(50);
 
-    // "After" pane should follow
     const afterScrollTop = await afterBody.evaluate((el) => el.scrollTop);
-    expect(afterScrollTop).toBe(100);
+    expect(afterScrollTop).toBe(target);
   });
 
   test("side-by-side scroll sync works in reverse direction", async ({
     page,
   }) => {
     await page.click('button[data-view="sbs"]');
+    await page.evaluate(() => document.documentElement.style.setProperty("--zoom", "8"));
     await page.setViewportSize({ width: 400, height: 300 });
     await page.waitForTimeout(200);
 
     const beforeBody = page.locator("#view-sbs .pane:first-child .pane-body");
     const afterBody = page.locator("#view-sbs .pane:last-child .pane-body");
 
-    // Scroll "after" pane down
-    await afterBody.evaluate((el) => {
-      el.scrollTop = 80;
+    const target = await afterBody.evaluate((el) => {
+      const t = Math.floor((el.scrollHeight - el.clientHeight) / 3);
+      el.scrollTop = t;
       el.dispatchEvent(new Event("scroll"));
+      return t;
     });
+    expect(target).toBeGreaterThan(0);
     await page.waitForTimeout(50);
 
-    // "Before" pane should follow
     const beforeScrollTop = await beforeBody.evaluate((el) => el.scrollTop);
-    expect(beforeScrollTop).toBe(80);
+    expect(beforeScrollTop).toBe(target);
   });
 
   test("swipe divider repositions on resize", async ({ page }) => {
