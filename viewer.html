@@ -45,10 +45,13 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
 /* --- Layer stack ---
    Layers are stacked with position:absolute. The first visible layer stays
    position:static to act as a "sizer" that gives the container its dimensions.
-   background:#1e1e1e ensures semi-transparent layers composite against a
-   solid dark background, preventing bleed-through in overlay/swipe modes.
-   isolation:isolate contains layer z-indexes within the stack. */
+   background ensures semi-transparent layers composite against a solid color,
+   preventing bleed-through in overlay/swipe modes.
+   isolation:isolate contains layer z-indexes within the stack.
+   PCB uses dark (#1e1e1e); schematic uses light (#f5f5f5) to match
+   KiCad's native schematic background. body[data-type] is set at init time. */
 .layer-stack{position:relative;display:inline-block;background:#1e1e1e;isolation:isolate}
+body[data-type="sch"] .layer-stack{background:#f5f5f5}
 .layer-stack img{display:block;max-width:100%;height:auto}
 .layer-stack img.layer{position:absolute;top:0;left:0;max-width:100%;height:auto;pointer-events:none}
 
@@ -61,9 +64,10 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
 .compare-wrap{position:relative;width:100%}
 .compare-wrap .layer-stack{display:block;max-width:100%;margin:0 auto}
 /* over-stack sits on top of the base layer-stack, same dimensions.
-   background:#1e1e1e prevents the base from bleeding through
-   semi-transparent layers in the overlay. */
+   background prevents the base from bleeding through semi-transparent
+   layers. Color matches the layer-stack (dark for PCB, light for sch). */
 .compare-wrap .over-stack{position:absolute;top:0;left:0;width:100%;height:100%;background:#1e1e1e}
+body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 .compare-wrap .over-stack .layer-stack{width:100%;max-width:100%}
 
 /* --- Overlay ---
@@ -146,6 +150,8 @@ const LAYER_COLORS = {
 function init() {
   $('#title').textContent = M.file;
   document.title = 'KiCad Diff: ' + M.file;
+  // Set body data-type for type-specific styling (e.g. sch uses light bg)
+  document.body.dataset.type = M.type;
   buildTabs();
   buildLayerPanel();
   buildViews();

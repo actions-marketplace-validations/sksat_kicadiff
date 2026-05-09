@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# kicadiff — KiCad ファイル (.kicad_pcb / .kicad_sch) のビジュアル diff ツール
+#
+# Usage:
+#   kicadiff pcb <file.kicad_pcb> [--output-dir <dir>] [--images-only]
+#   kicadiff sch <file.kicad_sch> [--output-dir <dir>] [--images-only]
+#   kicadiff <file>                     # ファイル拡張子から自動判定
+#
+# サブコマンドはファイル種別ごとに別の render.sh を呼び出すディスパッチャ。
+# 現在は両方とも共通の render.sh を経由する（render.sh 内で type 判定）。
+
+set -euo pipefail
+
+KICADIFF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+  cat <<EOF
+kicadiff — Visual diff for KiCad files
+
+Usage:
+  kicadiff pcb <file.kicad_pcb> [options]    Render PCB diff
+  kicadiff sch <file.kicad_sch> [options]    Render schematic diff
+  kicadiff <file>                            Auto-detect from extension
+  kicadiff --help                            Show this help
+
+Options:
+  --output-dir <dir>     Output directory (default: <repo>/.claude/preview)
+  --images-only          Skip HTML/viewer generation (regenerate images only)
+EOF
+}
+
+if [[ $# -eq 0 || "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+# サブコマンド or ファイルパスをディスパッチ
+case "${1:-}" in
+  pcb)
+    shift
+    file="${1:-}"
+    if [[ -z "$file" ]]; then echo "Error: pcb requires a file argument" >&2; exit 1; fi
+    case "$file" in
+      *.kicad_pcb) ;;
+      *) echo "Error: pcb subcommand requires a .kicad_pcb file, got: $file" >&2; exit 1 ;;
+    esac
+    shift
+    exec bash "$KICADIFF_DIR/render.sh" "$file" "$@"
+    ;;
+  sch)
+    shift
+    file="${1:-}"
+    if [[ -z "$file" ]]; then echo "Error: sch requires a file argument" >&2; exit 1; fi
+    case "$file" in
+      *.kicad_sch) ;;
+      *) echo "Error: sch subcommand requires a .kicad_sch file, got: $file" >&2; exit 1 ;;
+    esac
+    shift
+    exec bash "$KICADIFF_DIR/render.sh" "$file" "$@"
+    ;;
+  *.kicad_pcb|*.kicad_sch)
+    # ファイル拡張子から自動判定
+    exec bash "$KICADIFF_DIR/render.sh" "$@"
+    ;;
+  *)
+    echo "Error: unknown subcommand or unsupported file: $1" >&2
+    usage
+    exit 1
+    ;;
+esac

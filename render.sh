@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kicad-diff-viewer/render.sh
+# kicadiff/render.sh
 #
 # KiCad ファイルの Before/After ビジュアルプレビューを生成するスタンドアロンツール。
 # Claude Code の PostToolUse hook から呼ばれるほか、直接実行も可能。

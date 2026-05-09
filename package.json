@@ -1,14 +1,22 @@
 {
-  "name": "kicad-diff-viewer",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "kicadiff",
+  "version": "0.1.0",
+  "description": "Visual diff tool for KiCad PCB and schematic files",
+  "bin": {
+    "kicadiff": "./kicadiff"
+  },
   "scripts": {
     "test": "playwright test",
     "test:render": "bash test/render.test.sh",
     "test:all": "bash test/render.test.sh && playwright test"
   },
-  "keywords": [],
+  "keywords": [
+    "kicad",
+    "diff",
+    "pcb",
+    "schematic",
+    "visual-diff"
+  ],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.15.0",

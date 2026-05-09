@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Integration tests for render.sh
-# Runs render.sh against PicoBridge PCB and verifies outputs.
+# Integration tests for kicadiff CLI
+# Runs kicadiff against PicoBridge PCB and verifies outputs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PROJECT_DIR/.." && pwd)"
-RENDER="$PROJECT_DIR/render.sh"
+RENDER="$PROJECT_DIR/kicadiff"
 KICAD_FILE="$REPO_ROOT/PicoBridge/pcb/PicoBridge.kicad_pcb"
 OUTPUT_DIR=$(mktemp -d)
 SAFE_NAME="PicoBridge_pcb_PicoBridge.kicad_pcb"
@@ -146,6 +146,52 @@ CUSTOM_DIR=$(mktemp -d)
 bash "$RENDER" "$KICAD_FILE" --output-dir "$CUSTOM_DIR" >/dev/null 2>&1
 assert_file "output in custom dir" "$CUSTOM_DIR/${SAFE_NAME}_diff.html"
 rm -rf "$CUSTOM_DIR"
+
+# --- Subcommand validation ---
+echo "[Subcommands]"
+# pcb subcommand should reject .kicad_sch
+SCH_FILE="$REPO_ROOT/PicoBridge/pcb/PicoBridge.kicad_sch"
+if [[ -f "$SCH_FILE" ]]; then
+  if bash "$RENDER" pcb "$SCH_FILE" 2>/dev/null; then
+    fail "pcb subcommand rejects .kicad_sch"
+  else
+    pass "pcb subcommand rejects .kicad_sch"
+  fi
+  # sch subcommand should reject .kicad_pcb
+  if bash "$RENDER" sch "$KICAD_FILE" 2>/dev/null; then
+    fail "sch subcommand rejects .kicad_pcb"
+  else
+    pass "sch subcommand rejects .kicad_pcb"
+  fi
+fi
+
+# --- Schematic diff ---
+echo "[Schematic diff]"
+if [[ -f "$SCH_FILE" ]]; then
+  SCH_OUTPUT=$(mktemp -d)
+  SCH_SAFE_NAME="PicoBridge_pcb_PicoBridge.kicad_sch"
+  bash "$RENDER" sch "$SCH_FILE" --output-dir "$SCH_OUTPUT" >/dev/null 2>&1
+
+  assert_file "sch combined PNG exists" "$SCH_OUTPUT/after/${SCH_SAFE_NAME}.png"
+  assert_size "sch combined PNG size > 0" "$SCH_OUTPUT/after/${SCH_SAFE_NAME}.png"
+  assert_file "sch diff HTML exists" "$SCH_OUTPUT/${SCH_SAFE_NAME}_diff.html"
+
+  # Manifest should have type=sch
+  SCH_MANIFEST=$(sed -n 's/.*window.MANIFEST = \(.*\);.*/\1/p' "$SCH_OUTPUT/${SCH_SAFE_NAME}_diff.html")
+  if printf '%s' "$SCH_MANIFEST" | python3 -c "
+import sys, json
+m = json.load(sys.stdin)
+sys.exit(0 if m.get('type') == 'sch' else 1)
+" 2>/dev/null; then
+    pass "sch manifest has type=sch"
+  else
+    fail "sch manifest has type=sch"
+  fi
+
+  rm -rf "$SCH_OUTPUT"
+else
+  echo "  (skip: no .kicad_sch fixture)"
+fi
 
 # --- Summary ---
 echo ""

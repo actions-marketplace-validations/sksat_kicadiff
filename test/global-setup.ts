@@ -3,38 +3,38 @@ import * as path from "path";
 import * as fs from "fs";
 
 /**
- * Playwright global setup: generate test fixtures using render.sh
- * against the PicoBridge PCB file. The output is used by viewer tests.
+ * Playwright global setup: generate test fixtures using kicadiff CLI
+ * against the PicoBridge PCB file (and schematic if present).
  */
 export default function globalSetup() {
   const projectDir = path.resolve(__dirname, "..");
   const repoRoot = path.resolve(projectDir, "..");
   const fixtureDir = path.join(projectDir, "test", "fixtures");
-  const kicadFile = path.join(
-    repoRoot,
-    "PicoBridge",
-    "pcb",
-    "PicoBridge.kicad_pcb"
-  );
+  const kicadCli = path.join(projectDir, "kicadiff");
 
-  // Skip if KiCad file doesn't exist (CI without KiCad data)
-  if (!fs.existsSync(kicadFile)) {
-    console.log(
-      "Skipping fixture generation: KiCad file not found at",
-      kicadFile
-    );
+  const pcbFile = path.join(repoRoot, "PicoBridge", "pcb", "PicoBridge.kicad_pcb");
+  const schFile = path.join(repoRoot, "PicoBridge", "pcb", "PicoBridge.kicad_sch");
+
+  if (!fs.existsSync(pcbFile)) {
+    console.log("Skipping fixture generation: KiCad file not found at", pcbFile);
     return;
   }
 
-  // Generate fixtures (idempotent — overwrites existing)
-  console.log("Generating test fixtures with render.sh...");
-  execSync(
-    `bash "${path.join(projectDir, "render.sh")}" "${kicadFile}" --output-dir "${fixtureDir}"`,
-    {
+  console.log("Generating PCB fixtures...");
+  execSync(`bash "${kicadCli}" pcb "${pcbFile}" --output-dir "${fixtureDir}"`, {
+    cwd: repoRoot,
+    stdio: "pipe",
+    timeout: 60000,
+  });
+
+  if (fs.existsSync(schFile)) {
+    console.log("Generating schematic fixtures...");
+    execSync(`bash "${kicadCli}" sch "${schFile}" --output-dir "${fixtureDir}"`, {
       cwd: repoRoot,
       stdio: "pipe",
       timeout: 60000,
-    }
-  );
+    });
+  }
+
   console.log("Fixtures generated at", fixtureDir);
 }
