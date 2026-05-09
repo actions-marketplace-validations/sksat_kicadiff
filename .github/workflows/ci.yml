@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same branch when a new push lands so we
+# don't queue up redundant work on rapid pushes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Cheap fast feedback — runs without the heavy toolchain (no kicad-cli).
+  # Catches type errors before we wait on the full test job.
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: pnpm/action-setup@v6.0.6
+        with:
+          version: 10
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # The kicadiff CLI shebang is `#!/usr/bin/env bun`, so anything that
+      # invokes the binary needs bun on PATH. We don't run it in this job,
+      # but pnpm runs the prepare/pretypecheck scripts which we want to
+      # match the test job's environment exactly.
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: latest
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  # Full test suite. Needs kicad-cli (KiCad 10 rendering engine), rsvg-convert
+  # (SVG → PNG), ImageMagick (diff highlight), Bun (the kicadiff CLI shebang),
+  # and the Playwright Chromium browser (viewer DOM tests).
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+        # Tests create local commits in temporary git repos; the runner needs
+        # full repo info for the kicadiff side that walks the project's own
+        # git history (e.g. show <ref>:path).
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6.0.6
+        with:
+          version: 10
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: latest
+
+      # KiCad 10 official stable PPA. The default Ubuntu repo lags behind, and
+      # kicadiff's render pipeline relies on `kicad-cli pcb render --layer`
+      # (added in 9.x), so we have to pull from the PPA. We track the same
+      # KiCad major as the development environment (10.x).
+      - name: Install KiCad + image tooling
+        run: |
+          sudo add-apt-repository --yes ppa:kicad/kicad-10.0-releases
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            kicad \
+            librsvg2-bin \
+            imagemagick
+          kicad-cli --version
+          rsvg-convert --version
+          magick --version | head -1
+
+      # Tests build temporary git repos in $TMPDIR; CI workers don't have a
+      # global identity by default and `git commit` errors out without one.
+      - name: Configure git for fixture commits
+        run: |
+          git config --global user.email "ci@kicadiff.test"
+          git config --global user.name "kicadiff CI"
+          git config --global commit.gpgsign false
+          git config --global init.defaultBranch main
+
+      - run: pnpm install --frozen-lockfile
+
+      # Cache the Playwright browser download separately from pnpm-store
+      # because it lands under ~/.cache/ms-playwright, not in node_modules.
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - run: pnpm typecheck
+      - run: pnpm test
