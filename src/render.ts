@@ -18,7 +18,10 @@ import type { FileType, Manifest, ProjectManifest, SideManifest } from "./types.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PCB_LAYERS = "F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,Edge.Cuts";
-const REQUIRED_TOOLS = ["kicad-cli", "rsvg-convert", "python3"] as const;
+// python3 used to be required by an earlier bash-era hook; the TS render
+// path doesn't shell out to it, so requiring it would needlessly fail on
+// machines that have kicad-cli + rsvg-convert but no Python.
+const REQUIRED_TOOLS = ["kicad-cli", "rsvg-convert"] as const;
 
 export interface RenderOptions {
   /** Path to .kicad_pcb or .kicad_sch file (absolute or relative) */
@@ -162,7 +165,53 @@ function getCacheRoot(): string {
   return path.join(base, "kicadiff");
 }
 
-function cacheKeyFor(content: Buffer, fileType: FileType, filePath: string): string {
+/** Pre-fetched project sibling content used by the cache key. The caller
+ *  is responsible for reading from the right source — disk for working
+ *  tree, `git show` for ref renders — so the cache key matches what the
+ *  actual rendering will see. */
+interface ProjectSibling {
+  name: string;        // basename, e.g. "PicoBridge.kicad_pro"
+  content: Buffer;
+}
+
+/** Read sibling .kicad_pro / .kicad_prl for a pcb/sch file. Returns content
+ *  from disk in working-tree mode, from `git show` for a specific ref.
+ *  Sym/fp files have no project context, so the result is empty for those. */
+function readProjectSiblings(
+  filePath: string,
+  fileType: FileType,
+  ref: string,
+  repoRoot: string | null,
+): ProjectSibling[] {
+  if (fileType !== "pcb" && fileType !== "sch") return [];
+  const out: ProjectSibling[] = [];
+  const origExt = path.extname(filePath);
+  const origStem = filePath.slice(0, -origExt.length);
+  const fromWorkingTree = ref === "" || ref === "working";
+  for (const sibExt of [".kicad_pro", ".kicad_prl"]) {
+    const sibPath = origStem + sibExt;
+    let content: Buffer | null = null;
+    if (fromWorkingTree) {
+      if (fs.existsSync(sibPath)) {
+        try { content = fs.readFileSync(sibPath); } catch { /* ignore */ }
+      }
+    } else if (repoRoot) {
+      const sibRel = path.relative(repoRoot, sibPath);
+      content = gitReadAtRef(repoRoot, ref, sibRel);
+    }
+    if (content !== null) {
+      out.push({ name: path.basename(sibPath), content });
+    }
+  }
+  return out;
+}
+
+function cacheKeyFor(
+  content: Buffer,
+  fileType: FileType,
+  filePath: string,
+  siblings: ProjectSibling[],
+): string {
   const h = crypto.createHash("sha256");
   // Bumping any of these ingredients invalidates old cache entries:
   //   - kicadiff cache schema version (bump if directory layout changes)
@@ -173,9 +222,12 @@ function cacheKeyFor(content: Buffer, fileType: FileType, filePath: string): str
   //     output may also depend on sibling project files like .kicad_pro)
   //   - sibling .kicad_pro / .kicad_prl content (theme/variant settings that
   //     KiCad reads from the project root affect rendering even when the
-  //     .kicad_pcb / .kicad_sch content is unchanged)
+  //     .kicad_pcb / .kicad_sch content is unchanged); read from the same
+  //     source as the file content (working tree vs. git ref) so the key
+  //     matches what kicad-cli will actually see.
   //   - source content
-  h.update("kicadiff-cache-v2\0");
+  // Bumped to v3 when sibling sourcing was tied to ref/working-tree.
+  h.update("kicadiff-cache-v3\0");
   h.update(getKicadCliVersion());
   h.update("\0");
   h.update(fileType);
@@ -183,25 +235,11 @@ function cacheKeyFor(content: Buffer, fileType: FileType, filePath: string): str
   h.update(path.resolve(filePath));
   h.update("\0");
 
-  // Project files only matter for pcb/sch — sym/fp are self-contained.
-  // Filter out our own temp leftovers (preview_*.kicad_prl) so they don't
-  // make the cache key churn between runs — kicad-cli writes a sibling .prl
-  // for each temp .kicad_pcb / .kicad_sch we feed it, and those files
-  // accumulate in the working tree if not cleaned up.
-  if (fileType === "pcb" || fileType === "sch") {
-    const dir = path.dirname(filePath);
-    try {
-      const siblings = fs.readdirSync(dir)
-        .filter(f => (f.endsWith(".kicad_pro") || f.endsWith(".kicad_prl"))
-                  && !f.startsWith("preview_"))
-        .sort();
-      for (const f of siblings) {
-        h.update(f);
-        h.update("\0");
-        try { h.update(fs.readFileSync(path.join(dir, f))); } catch { /* ignore */ }
-        h.update("\0");
-      }
-    } catch { /* directory unreadable — proceed without sibling fingerprint */ }
+  for (const { name, content: c } of siblings) {
+    h.update(name);
+    h.update("\0");
+    h.update(c);
+    h.update("\0");
   }
 
   h.update(content);
@@ -742,8 +780,14 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
       if (content === null) return false;
     }
 
+    // Sibling project files for the cache key — read from the same source
+    // as `content` (working tree or git ref) so the key reflects what
+    // kicad-cli will actually see during the render below.
+    const siblings = useCache && content !== null
+      ? readProjectSiblings(filePath, fileType, ref, repoRoot)
+      : [];
     const cacheHash = (useCache && content !== null)
-      ? cacheKeyFor(content, fileType, filePath)
+      ? cacheKeyFor(content, fileType, filePath, siblings)
       : null;
 
     if (cacheHash && loadFromCache(cacheHash, sideDir, safe, fileType)) {
@@ -756,15 +800,42 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
       // We already have content in memory — write to temp without a second
       // git invocation.
       const tempFile = writeContentToTempBeside(content!, filePath);
+      const cleanupPaths: string[] = [tempFile];
       try {
+        // For pcb/sch, kicad-cli reads sibling .kicad_pro / .kicad_prl from
+        // the same dir for theme / project settings. Without this block,
+        // a commit-to-commit render would use whatever is in the WORKING
+        // TREE, which is misleading when project settings changed across
+        // revisions. Extract those siblings at the same ref alongside the
+        // temp KiCad file (matched by basename so kicad-cli picks them up).
+        if (fileType === "pcb" || fileType === "sch") {
+          const ext = path.extname(tempFile);
+          const tempStem = tempFile.slice(0, -ext.length);
+          const origExt = path.extname(filePath);
+          const origStem = filePath.slice(0, -origExt.length);
+          for (const sibExt of [".kicad_pro", ".kicad_prl"]) {
+            const origSib = origStem + sibExt;
+            const sibRel = repoRoot ? path.relative(repoRoot, origSib) : "";
+            if (sibRel && repoRoot && gitHasFileAtRef(repoRoot, ref, sibRel)) {
+              const sibContent = gitReadAtRef(repoRoot, ref, sibRel);
+              if (sibContent) {
+                const sibTemp = tempStem + sibExt;
+                fs.writeFileSync(sibTemp, sibContent);
+                cleanupPaths.push(sibTemp);
+              }
+            }
+          }
+        }
         await renderFromSource(tempFile);
       } finally {
-        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+        for (const p of cleanupPaths) {
+          if (fs.existsSync(p)) {
+            try { fs.unlinkSync(p); } catch { /* ignore */ }
+          }
+        }
         // kicad-cli writes a sibling .kicad_prl next to .kicad_pcb / .kicad_sch
-        // (project state — last layer, view, etc.). For our temp file it's
-        // useless and pollutes the working tree, so clean it up. Without this,
-        // accumulating preview_*.kicad_prl files invalidate the render cache
-        // because they appear in the cache key's sibling list.
+        // even if we didn't pre-write one — clean that up too. (No-op if our
+        // pre-extracted .kicad_prl already covered the same path.)
         const ext = path.extname(tempFile);
         if (ext === ".kicad_pcb" || ext === ".kicad_sch") {
           const tempPrl = tempFile.slice(0, -ext.length) + ".kicad_prl";
@@ -973,20 +1044,41 @@ export function resolveInputs(
         }
       }
     } else {
-      // Project directory — pick first matching pcb/sch and any sibling sym/pretty
+      // Project directory — pick a pcb/sch *pair* that share a basename, so
+      // a folder containing two unrelated boards doesn't get rendered as
+      // "board A's PCB + board B's schematic". Preference order:
+      //   1. <project>.kicad_pro exists → use its basename (the canonical pair)
+      //   2. else: first basename for which both .kicad_pcb and .kicad_sch exist
+      //   3. else: first .kicad_pcb (no sch) or first .kicad_sch (no pcb)
+      const entries = fs.readdirSync(abs).sort();
+      const pcbBases = new Set<string>();
+      const schBases = new Set<string>();
+      const proBases = new Set<string>();
+      for (const f of entries) {
+        if (f.endsWith(".kicad_pcb")) pcbBases.add(f.slice(0, -".kicad_pcb".length));
+        else if (f.endsWith(".kicad_sch")) schBases.add(f.slice(0, -".kicad_sch".length));
+        else if (f.endsWith(".kicad_pro")) proBases.add(f.slice(0, -".kicad_pro".length));
+      }
       let projBase: string | undefined;
-      for (const f of fs.readdirSync(abs).sort()) {
-        const fp = path.join(abs, f);
-        if (!pcb && f.endsWith(".kicad_pcb")) {
-          pcb = fp;
-          projBase = f.slice(0, -".kicad_pcb".length);
-        }
-        if (!sch && f.endsWith(".kicad_sch")) {
-          sch = fp;
-          if (!projBase) projBase = f.slice(0, -".kicad_sch".length);
+      // 1) prefer a basename that has a .kicad_pro alongside it
+      for (const b of [...proBases].sort()) {
+        if (pcbBases.has(b) || schBases.has(b)) { projBase = b; break; }
+      }
+      // 2) fall back to the first basename that has BOTH pcb and sch
+      if (!projBase) {
+        for (const b of [...pcbBases].sort()) {
+          if (schBases.has(b)) { projBase = b; break; }
         }
       }
-      if (projBase) scanProjectSiblings(abs, projBase);
+      // 3) fall back to the first pcb (or sch) with no matching sibling
+      if (!projBase) projBase = [...pcbBases].sort()[0] ?? [...schBases].sort()[0];
+      if (projBase) {
+        const pcbCandidate = path.join(abs, `${projBase}.kicad_pcb`);
+        const schCandidate = path.join(abs, `${projBase}.kicad_sch`);
+        if (fs.existsSync(pcbCandidate)) pcb = pcbCandidate;
+        if (fs.existsSync(schCandidate)) sch = schCandidate;
+        scanProjectSiblings(abs, projBase);
+      }
     }
   } else if (abs.endsWith(".kicad_pro")) {
     const dir = path.dirname(abs);

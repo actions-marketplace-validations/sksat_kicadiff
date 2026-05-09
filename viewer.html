@@ -724,11 +724,20 @@ function makeLayerStack(side, id) {
       stack.appendChild(img);
     });
   } else {
-    // For multi-sheet schematics, prefer the current page's PNG. Falls back
-    // to `combined` for PCB and single-sheet sch (no `pages` field).
+    // For multi-sheet schematics / sym / fp, look up the current page's PNG
+    // by NAME — pages list is sourced from `M.after.pages`, but each side
+    // has its own pages array, and a sheet/symbol could be added, removed,
+    // or renamed between revisions. Indexing by raw `currentPage` would
+    // therefore compare against the wrong before-side page. Falls back to
+    // `combined` when the side has no matching page (e.g. removed sheet).
     const img = document.createElement('img');
-    const pageSrc = (data.pages && data.pages[currentPage] && data.pages[currentPage].png) || data.combined;
-    img.src = pageSrc;
+    const wantName = M.after?.pages?.[currentPage]?.name;
+    let pageSrc;
+    if (wantName && data.pages) {
+      const match = data.pages.find(p => p.name === wantName);
+      if (match) pageSrc = match.png;
+    }
+    img.src = pageSrc || data.combined;
     img.onerror = () => { img.style.display = 'none'; };
     stack.appendChild(img);
   }
