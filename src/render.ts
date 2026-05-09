@@ -106,7 +106,18 @@ function safeName(relPath: string): string {
 }
 
 function getRepoRoot(filePath: string): string | null {
-  const r = spawnSync("git", ["-C", path.dirname(filePath), "rev-parse", "--show-toplevel"], {
+  // Walk up from the file's parent until we find an existing directory —
+  // when a file (or its directory) was deleted in the working tree, the
+  // immediate parent may not exist anymore even though the repo does.
+  // Using `git -C <missing-dir>` would fail there and we'd lose the ability
+  // to resolve refs for the deleted-file flow.
+  let dir = path.dirname(filePath);
+  while (!fs.existsSync(dir)) {
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // hit filesystem root
+    dir = parent;
+  }
+  const r = spawnSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
     encoding: "utf8",
   });
   return r.status === 0 ? r.stdout.trim() : null;
@@ -1160,28 +1171,32 @@ export function resolveInputs(
         const schCandidate = path.join(abs, `${projBase}.kicad_sch`);
         if (fs.existsSync(pcbCandidate)) pcb = pcbCandidate;
         if (fs.existsSync(schCandidate)) sch = schCandidate;
+        // scanProjectSiblings handles the project-bundled libraries (those
+        // that share basename with the project — `<base>.kicad_sym`,
+        // `<base>.pretty/`). Don't sweep the whole directory in this case;
+        // pulling in every unrelated `.kicad_sym` would clutter the viewer
+        // for normal "combined PCB + schematic" diffs.
         scanProjectSiblings(abs, projBase);
-      }
-      // Library-only directories (no pcb/sch, just .kicad_sym or .pretty/)
-      // are still valid inputs — the user might be diffing a symbol library
-      // or a footprint library directory directly. Pick those up regardless
-      // of projBase, but respect any scope filter.
-      if (scope === undefined || scope === "sym") {
-        for (const f of entries) {
-          if (f.endsWith(".kicad_sym") && !f.startsWith("preview_")) {
-            const p = path.join(abs, f);
-            if (!syms.includes(p)) syms.push(p);
+      } else {
+        // No pcb/sch in this directory → it's a library-only directory.
+        // Treat all `.kicad_sym` files and `.pretty/` subdirectories as
+        // inputs, scoped by the active subcommand if any.
+        if (scope === undefined || scope === "sym") {
+          for (const f of entries) {
+            if (f.endsWith(".kicad_sym") && !f.startsWith("preview_")) {
+              syms.push(path.join(abs, f));
+            }
           }
         }
-      }
-      if (scope === undefined || scope === "fp") {
-        for (const f of entries) {
-          if (f.endsWith(".pretty")) {
-            const pretty = path.join(abs, f);
-            if (fs.statSync(pretty).isDirectory()) {
-              for (const m of fs.readdirSync(pretty).sort()) {
-                if (m.endsWith(".kicad_mod") && !m.startsWith("preview_")) {
-                  fps.push(path.join(pretty, m));
+        if (scope === undefined || scope === "fp") {
+          for (const f of entries) {
+            if (f.endsWith(".pretty")) {
+              const pretty = path.join(abs, f);
+              if (fs.statSync(pretty).isDirectory()) {
+                for (const m of fs.readdirSync(pretty).sort()) {
+                  if (m.endsWith(".kicad_mod") && !m.startsWith("preview_")) {
+                    fps.push(path.join(pretty, m));
+                  }
                 }
               }
             }
