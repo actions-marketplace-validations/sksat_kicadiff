@@ -78,7 +78,7 @@
 		(uuid "aa000001-0000-0000-0000-000000000001")
 		(at 97 110)
 		(property "Reference" "J1"
-			(at -3 0 0)
+			(at 3 -2 0)
 			(layer "F.SilkS")
 			(uuid "aa000001-aaaa-aaaa-aaaa-000000000001")
 			(effects
@@ -86,11 +86,11 @@
 					(size 1 1)
 					(thickness 0.15)
 				)
-				(justify right)
+				(justify left)
 			)
 		)
 		(property "Value" "5V_IN"
-			(at 3 0 0)
+			(at 3 4.54 0)
 			(layer "F.SilkS")
 			(uuid "aa000001-bbbb-bbbb-bbbb-000000000001")
 			(effects
@@ -593,7 +593,7 @@
 	(footprint "Button_Switch_SMD:SW_SPST_TL3342"
 		(layer "F.Cu")
 		(uuid "aa000008-0000-0000-0000-000000000001")
-		(at 143 117)
+		(at 148 117)
 		(property "Reference" "SW1"
 			(at 0 -5 0)
 			(layer "F.SilkS")
@@ -672,7 +672,7 @@
 	(footprint "Resistor_SMD:R_0805_2012Metric"
 		(layer "F.Cu")
 		(uuid "aa000009-0000-0000-0000-000000000001")
-		(at 148 124)
+		(at 143 127)
 		(property "Reference" "R2"
 			(at 0 -2 0)
 			(layer "F.SilkS")
@@ -737,7 +737,7 @@
 	(footprint "Resistor_SMD:LED_0805_2012Metric"
 		(layer "F.Cu")
 		(uuid "aa00000a-0000-0000-0000-000000000001")
-		(at 153 124)
+		(at 153 127)
 		(property "Reference" "D1"
 			(at 0 -2 0)
 			(layer "F.SilkS")
@@ -802,9 +802,9 @@
 	(footprint "Connector_PinHeader_2.54mm:PinHeader_1x06"
 		(layer "F.Cu")
 		(uuid "aa00000b-0000-0000-0000-000000000001")
-		(at 163 117)
+		(at 160 117)
 		(property "Reference" "J2"
-			(at -3 0 0)
+			(at -3 -2 0)
 			(layer "F.SilkS")
 			(uuid "aa00000b-aaaa-aaaa-aaaa-000000000001")
 			(effects
@@ -816,7 +816,7 @@
 			)
 		)
 		(property "Value" "PROG/IO"
-			(at 3 0 0)
+			(at -3 14.7 0)
 			(layer "F.SilkS")
 			(uuid "aa00000b-bbbb-bbbb-bbbb-000000000001")
 			(effects
@@ -824,7 +824,7 @@
 					(size 1 1)
 					(thickness 0.15)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Datasheet" ""
@@ -1154,7 +1154,7 @@
 		(uuid "f0000001-0000-0000-0000-000000000001")
 	)
 	(gr_text "expansion"
-		(at 130 138 0)
+		(at 123 138 0)
 		(layer "F.SilkS")
 		(uuid "ed00004e-0000-0000-0000-000000000001")
 		(effects
@@ -1165,7 +1165,7 @@
 		)
 	)
 	(gr_text "POWER"
-		(at 105 100 0)
+		(at 100 100 0)
 		(layer "F.SilkS")
 		(uuid "ed00004b-0000-0000-0000-000000000001")
 		(effects
@@ -1176,7 +1176,7 @@
 		)
 	)
 	(gr_text "MCU"
-		(at 133 100 0)
+		(at 130 100 0)
 		(layer "F.SilkS")
 		(uuid "ed00004c-0000-0000-0000-000000000001")
 		(effects
@@ -1186,8 +1186,8 @@
 			)
 		)
 	)
-	(gr_text "PERIPHERALS"
-		(at 158 100 0)
+	(gr_text "I/O"
+		(at 154 100 0)
 		(layer "F.SilkS")
 		(uuid "ed00004d-0000-0000-0000-000000000001")
 		(effects
@@ -1334,15 +1334,15 @@
 		(uuid "d000005f-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 145.5 120)
-		(end 145.5 141)
+		(start 150.5 120)
+		(end 150.5 141)
 		(width 0.25)
 		(layer "B.Cu")
 		(net "GND")
 		(uuid "d0000060-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 154 124)
+		(start 154 127)
 		(end 154 141)
 		(width 0.25)
 		(layer "B.Cu")
@@ -1350,8 +1350,8 @@
 		(uuid "d0000061-0000-0000-0000-000000000001")
 	)
 	(segment
-		(start 163 119.54)
-		(end 163 141)
+		(start 160 119.54)
+		(end 160 141)
 		(width 0.25)
 		(layer "B.Cu")
 		(net "GND")
@@ -1359,7 +1359,7 @@
 	)
 	(segment
 		(start 97 141)
-		(end 163 141)
+		(end 160 141)
 		(width 0.25)
 		(layer "B.Cu")
 		(net "GND")
