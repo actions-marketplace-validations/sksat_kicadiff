@@ -34,6 +34,26 @@ needed transiently. Tracked in `DESIGN.md` (Runtime dependencies).
   Bun is also what compiles the standalone binary, so no separate Node
   install is needed for any workflow.
 
+## Install
+
+Three ways depending on what's already on your machine:
+
+```sh
+# 1. One-shot via Bun's package runner (no install)
+bunx kicadiff [args...]
+
+# 2. npm-style install (puts `kicadiff` on PATH)
+npm install -g kicadiff
+# or with pnpm / bun add -g
+
+# 3. Standalone binary — single file, no Bun runtime needed.
+#    Drops `kicadiff` into ~/.local/bin (override with KICADIFF_INSTALL_DIR).
+curl -fsSL https://raw.githubusercontent.com/sksat/kicadiff/main/install.sh | sh
+```
+
+`kicad-cli` (and `rsvg-convert` / `magick`) are not bundled — install KiCad 9+
+first, then pick whichever kicadiff distribution form fits your workflow.
+
 ## Usage
 
 `kicadiff` works on the same positional argument shape as `git diff`,

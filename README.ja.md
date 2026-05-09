@@ -35,6 +35,26 @@ KiCad プロジェクト用の visual diff ツール。`.kicad_pcb` /
   standalone binary をコンパイルするのも Bun なので、Node を別途用意
   する必要はない。
 
+## インストール
+
+環境に合わせて 3 通り:
+
+```sh
+# 1. Bun の package runner で 1 ショット実行 (インストール不要)
+bunx kicadiff [args...]
+
+# 2. npm 系のグローバルインストール (`kicadiff` が PATH に入る)
+npm install -g kicadiff
+# pnpm / bun add -g でも可
+
+# 3. standalone binary。1 ファイル、Bun runtime 不要。
+#    ~/.local/bin に `kicadiff` を配置 (KICADIFF_INSTALL_DIR で上書き可)。
+curl -fsSL https://raw.githubusercontent.com/sksat/kicadiff/main/install.sh | sh
+```
+
+`kicad-cli` (と `rsvg-convert` / `magick`) は同梱しないので、KiCad 9+ を
+先に入れた上で kicadiff の好きな配布形態を選んでください。
+
 ## 使い方
 
 `git diff` と同じ位置引数の形を踏襲しつつ、ファイル型を限定したい

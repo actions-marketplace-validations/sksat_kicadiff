@@ -4,8 +4,16 @@
   "description": "Visual diff tool for KiCad PCB and schematic files",
   "type": "module",
   "bin": {
-    "kicadiff": "./kicadiff"
+    "kicadiff": "src/index.ts"
   },
+  "files": [
+    "src/",
+    "scripts/embed-viewer.mjs",
+    "viewer.html",
+    "LICENSE",
+    "README.md",
+    "README.ja.md"
+  ],
   "scripts": {
     "embed-viewer": "node scripts/embed-viewer.mjs",
     "prepare": "node scripts/embed-viewer.mjs",
@@ -27,8 +35,16 @@
     "schematic",
     "visual-diff"
   ],
-  "author": "",
+  "author": "sksat <sksat@sksat.net>",
   "license": "ISC",
+  "homepage": "https://github.com/sksat/kicadiff#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sksat/kicadiff.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sksat/kicadiff/issues"
+  },
   "packageManager": "pnpm@10.15.0",
   "devDependencies": {
     "@playwright/test": "^1.59.1",

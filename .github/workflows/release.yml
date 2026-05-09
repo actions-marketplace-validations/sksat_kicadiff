@@ -1,0 +1,63 @@
+name: Release
+
+# Tag-driven release: pushing a `vX.Y.Z` tag triggers a build of the
+# standalone binaries for every supported target and uploads them to a
+# GitHub Release. Together with `npm publish` (still manual), this gives
+# users two install paths: `bunx kicadiff` for npm consumers, or the
+# release binary + install.sh for "kicad-cli only" environments.
+on:
+  push:
+    tags: ['v*.*.*']
+
+# `gh release create` needs write access to repository contents.
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build standalone binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: pnpm/action-setup@v6.0.6
+        with:
+          version: 10
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: latest
+
+      - run: pnpm install --frozen-lockfile
+
+      # build:bun:all produces dist/kicadiff-{linux-x64,linux-arm64,darwin-x64,darwin-arm64}.
+      # Each is a self-contained binary that only needs kicad-cli on the
+      # target machine (Bun runtime, viewer, dependencies are all baked in).
+      - run: pnpm run build:bun:all
+
+      - name: Compute SHA-256 checksums
+        run: |
+          cd dist
+          sha256sum kicadiff-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # gh CLI is preinstalled on ubuntu-latest runners, so we don't need
+      # an extra action dependency for the release step.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/kicadiff-linux-x64 \
+            dist/kicadiff-linux-arm64 \
+            dist/kicadiff-darwin-x64 \
+            dist/kicadiff-darwin-arm64 \
+            dist/SHA256SUMS
