@@ -45,6 +45,10 @@
   "bugs": {
     "url": "https://github.com/sksat/kicadiff/issues"
   },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "packageManager": "pnpm@10.15.0",
   "devDependencies": {
     "@playwright/test": "^1.59.1",
