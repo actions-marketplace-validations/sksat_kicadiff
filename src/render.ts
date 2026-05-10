@@ -15,6 +15,7 @@ import which from "which";
 import VIEWER_HTML from "./viewer-content.ts";
 import type { FileType, Manifest, ProjectManifest, SideManifest } from "./types.ts";
 import { splitDiff } from "./diff-overlay.ts";
+import { compositePcbLayers } from "./composite.ts";
 import { Resvg } from "@resvg/resvg-js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -255,7 +256,11 @@ function cacheKeyFor(
   // @resvg/resvg-js: rasteriser output bytes differ slightly even for
   // visually-identical inputs, so old v3 PNG cache entries would
   // confuse the byte-level hasDiff check.
-  h.update("kicadiff-cache-v4\0");
+  // Bump on every change that alters the bytes we cache. v5: PCB
+  // combined PNG is now alpha-composited from the per-layer PNGs
+  // (viewer-equivalent translucency, F.Cu on top) instead of a flat
+  // raster of kicad-cli's combined SVG.
+  h.update("kicadiff-cache-v5\0");
   h.update(getKicadCliVersion());
   h.update("\0");
   h.update(fileType);
@@ -872,7 +877,16 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
           renderPcbCombined(src, targetSvg),
           renderPcbLayers(src, layersDir),
         ]);
-        await svgToPng(targetSvg, targetPng);
+        // Build the side-level combined PNG by alpha-compositing the
+        // per-layer PNGs at viewer-equivalent opacity / z-order
+        // (F.Cu on top, all layers at 0.6) so PR-embedded thumbnails
+        // and the HTML viewer agree visually. Falls back to a flat
+        // raster of the kicad-cli combined SVG if compositing can't
+        // proceed — typically when the layers dir is empty for some
+        // reason.
+        if (!compositePcbLayers(layersDir, targetPng)) {
+          await svgToPng(targetSvg, targetPng);
+        }
       } else if (fileType === "sch") {
         // renderSch produces rootPng directly (and per-page PNGs in schPagesDir)
         await renderSch(src, sideDir, targetPng, schPagesDir, schRootName);
