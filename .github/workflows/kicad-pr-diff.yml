@@ -97,9 +97,10 @@ jobs:
           upload-artifact: "true"
           pr-comment: "true"
           pr-description: "true"
-          # Push rendered PNGs to the PR head branch under
-          # assets/kicadiff-preview/ and reference them via
+          # Force-push rendered PNGs to a sibling orphan branch
+          # (kicadiff-preview/<head-ref>) and reference them via
           # raw.githubusercontent.com from the comment / description /
           # job summary, so reviewers see the images inline without
-          # downloading the artifact.
-          image-host: same-branch
+          # downloading the artifact and without polluting the PR's
+          # own diff.
+          image-host: branch

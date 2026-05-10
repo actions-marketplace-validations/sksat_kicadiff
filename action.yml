@@ -135,27 +135,35 @@ inputs:
       comment / description as inline <img>:
         - "artifact" (default): images live only in the build artifact;
           the comment / description link to it for the rich view.
-        - "same-branch": copy combined before/after PNGs into the PR
-          head branch under `image-host-path`, commit + push them, and
-          embed `<img>` tags in the comment / description / job summary
-          via raw.githubusercontent.com so they render inline. Requires
-          contents: write on the workflow. Falls back to "artifact"
-          (with ::warning::) for fork PRs since GITHUB_TOKEN can't
-          push to forks.
+        - "branch": force-push combined before/after PNGs to a sibling
+          orphan branch (default name `kicadiff-preview/<head-ref>`,
+          configurable via image-host-branch), then embed `<img>` tags
+          in the comment / description / job summary via
+          raw.githubusercontent.com so they render inline. The orphan
+          branch keeps the preview images out of the PR's own diff.
+          Requires contents: write on the workflow. Fork PRs fall back
+          to "artifact" with ::warning:: since GITHUB_TOKEN can't push
+          to forks.
     required: false
     default: "artifact"
+  image-host-branch:
+    description: |
+      Branch to force-push the orphan preview commit to. Empty (the
+      default) auto-derives `kicadiff-preview/<head-ref>` so each PR
+      head gets its own preview branch; set this to override (for
+      instance to a fixed `kicadiff-preview` branch shared across
+      PRs). Honoured only when image-host is "branch".
+    required: false
+    default: ""
   image-host-path:
     description: |
-      Project-relative directory where same-branch images are committed.
-      Honoured only when image-host is "same-branch".
+      Path inside the preview branch where the rendered PNGs live.
+      Honoured only when image-host is "branch".
     required: false
-    default: "assets/kicadiff-preview"
+    default: "preview"
   image-host-commit-message:
     description: |
-      Commit message for the auto-pushed image update. The action also
-      uses this as a marker to detect its own commits and skip the
-      heavy work on the synchronize event that the push triggers — so
-      changing it across runs would defeat the loop guard.
+      Commit message for the auto-pushed image update.
     required: false
     default: "chore(kicadiff): update preview images"
 
@@ -331,21 +339,26 @@ runs:
         retention-days: ${{ inputs.artifact-retention-days }}
         if-no-files-found: warn
 
-    # ----- Optional: same-branch image hosting -----
-    # Copies combined before/after PNGs into the project tree at
-    # `image-host-path`, commits + pushes them on the PR head branch,
-    # and exports the raw.githubusercontent.com base URL so the body
-    # / summary composer can build inline <img> references.
+    # ----- Optional: image-host=branch (orphan preview branch) -----
+    # Force-pushes a single-commit orphan branch carrying the rendered
+    # PNGs, then exports a raw.githubusercontent.com base URL so the
+    # body / summary composer can build inline <img> references. The
+    # orphan branch keeps the preview images entirely out of the PR's
+    # own diff.
+    #
+    # Each PR head gets its own preview branch by default
+    # (kicadiff-preview/<head-ref>), so concurrent PRs don't trample
+    # each other. Override via `image-host-branch` to share a branch.
     #
     # Outputs:
-    #   skipped         "true" when same-branch wasn't used or fell
-    #                   back (fork PR / no images to push).
+    #   skipped         "true" when the mode wasn't used or fell back
+    #                   (fork PR, no PR context).
     #   image-base-url  https URL ending in /<image-host-path> at the
-    #                   most recent SHA carrying the images. Empty
-    #                   when skipped.
-    - name: Stage and push same-branch images
+    #                   pushed SHA carrying the images. Empty when
+    #                   skipped.
+    - name: Stage and push preview images to orphan branch
       id: same-branch
-      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.image-host == 'same-branch' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.image-host == 'branch' }}
       shell: bash
       env:
         OUT_DIR: ${{ steps.run.outputs.output-dir }}
@@ -354,34 +367,50 @@ runs:
         HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         BASE_REPO: ${{ github.repository }}
         HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        BRANCH_OVERRIDE: ${{ inputs.image-host-branch }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -eu
 
-        # Fork detection. GITHUB_TOKEN can't push to a fork branch, so
-        # the only safe behaviour is to fall back to the artifact path
-        # and tell the user. Empty HEAD_REPO means we're outside a PR
-        # context entirely, in which case there's no branch to push to
-        # — same outcome.
+        # Fork detection. GITHUB_TOKEN can't push to fork branches, and
+        # outside a PR context there's no head ref to derive a name
+        # from — fall back to artifact-only with a warning.
         if [ -z "$HEAD_REPO" ] || [ "$HEAD_REPO" != "$BASE_REPO" ]; then
-          echo "::warning::image-host=same-branch isn't usable for this run (HEAD repo: ${HEAD_REPO:-<none>}, base repo: $BASE_REPO). Falling back to artifact-only image hosting."
+          echo "::warning::image-host=branch isn't usable for this run (HEAD repo: ${HEAD_REPO:-<none>}, base repo: $BASE_REPO). Falling back to artifact-only image hosting."
           echo "skipped=true" >> "$GITHUB_OUTPUT"
           echo "image-base-url=" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
-        # Wipe and repopulate so deleted KiCad files surface as deletions
-        # in the preview directory too. Only touches *.png at the top
-        # level — sibling docs / READMEs in the same dir survive.
-        mkdir -p "$DEST_REL"
-        find "$DEST_REL" -maxdepth 1 -type f -name '*.png' -delete
+        # Resolve target branch.
+        if [ -n "$BRANCH_OVERRIDE" ]; then
+          PREVIEW_BRANCH="$BRANCH_OVERRIDE"
+        else
+          PREVIEW_BRANCH="kicadiff-preview/$HEAD_REF"
+        fi
+        echo "Preview branch: $PREVIEW_BRANCH"
 
-        # kicadiff writes per-side combined PNGs at <out>/{before,after}/<safe>.png.
-        # We pair them up and emit <safe>-{before,after}.png in DEST_REL.
+        # Build a single-commit orphan tree in a temp directory. Doing
+        # this in a fresh repo (not via `git worktree --orphan` on the
+        # PR checkout) keeps history minimal — the preview branch holds
+        # only one commit per push, with no shared blobs from main.
+        TMP_REPO="$(mktemp -d -t kicadiff-preview.XXXXXX)"
+        trap 'rm -rf "$TMP_REPO"' EXIT
+
+        cd "$TMP_REPO"
+        git init -q --initial-branch=preview
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]"
+
+        mkdir -p "$DEST_REL"
+
+        # kicadiff writes per-side combined PNGs at
+        # <out>/{before,after}/<safe>.png. Pair them up and emit
+        # <safe>-{before,after}.png under DEST_REL.
         if [ -d "$OUT_DIR/after" ]; then
           for src in "$OUT_DIR"/after/*.png; do
             [ -f "$src" ] || continue
-            name=$(basename "$src" .png)
+            name="$(basename "$src" .png)"
             cp "$src" "$DEST_REL/$name-after.png"
             before_src="$OUT_DIR/before/$name.png"
             if [ -f "$before_src" ]; then
@@ -390,32 +419,18 @@ runs:
           done
         fi
 
-        # Stage and check whether anything actually changed.
+        # An empty preview directory still results in a valid commit;
+        # we just won't have any images to embed. Keep going so the
+        # action behaves consistently.
         git add "$DEST_REL"
-        if git diff --cached --quiet; then
-          # Nothing new — but the existing committed images in this
-          # path are still valid for raw URLs at the current HEAD.
-          echo "No image changes to commit."
-          NEW_SHA=$(git rev-parse HEAD)
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
-          echo "image-base-url=https://raw.githubusercontent.com/$BASE_REPO/$NEW_SHA/$DEST_REL" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
+        git commit -q --allow-empty -m "$COMMIT_MSG"
 
-        # Bot identity for the auto-commit. The 41898282 user-id +
-        # noreply email is GitHub's recommended pattern for the
-        # github-actions[bot] account when committing from CI.
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git config user.name "github-actions[bot]"
-        git commit -m "$COMMIT_MSG"
-
-        # Push to the PR head branch via the token-authenticated remote
-        # URL. Don't reuse the existing `origin` remote in case it was
-        # set up as ssh; we always want HTTPS + token here.
         push_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${BASE_REPO}.git"
-        git push "$push_url" "HEAD:$HEAD_REF"
+        # Force-push: each run replaces the orphan branch entirely, so
+        # the preview branch always carries exactly the latest render.
+        git push -f -q "$push_url" "HEAD:refs/heads/$PREVIEW_BRANCH"
 
-        NEW_SHA=$(git rev-parse HEAD)
+        NEW_SHA="$(git rev-parse HEAD)"
         echo "skipped=false" >> "$GITHUB_OUTPUT"
         echo "image-base-url=https://raw.githubusercontent.com/$BASE_REPO/$NEW_SHA/$DEST_REL" >> "$GITHUB_OUTPUT"
 
