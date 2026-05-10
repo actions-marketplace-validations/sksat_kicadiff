@@ -104,6 +104,14 @@ kicadiff project/ --open vscode
 kicadiff project/ --open firefox
 kicadiff project/ --open=/usr/bin/open  # arbitrary command
 
+# Watch mode — re-render every time an input file changes. Hot reload comes
+# from the viewer: VSCode Live Preview / live-server / similar will refresh
+# the page automatically once kicadiff overwrites the images. For plain
+# file:// browsers, kicadiff injects a tiny image-polling script so the
+# rendered images update in place without needing F5.
+kicadiff project/ --watch
+kicadiff project/ --watch --open vscode
+
 # Other
 kicadiff project/ -v                    # verbose summary (full PNG paths)
 kicadiff project/ -q                    # suppress summary

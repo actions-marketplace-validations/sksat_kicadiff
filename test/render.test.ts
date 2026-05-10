@@ -924,3 +924,85 @@ test.describe("hook subcommand", () => {
     expect(fs.existsSync(log)).toBe(true);
   });
 });
+
+// =============================================================================
+// --watch: re-render on input file change. Spawns the CLI in the background,
+// waits for the initial render, mutates the source, and confirms the rendered
+// PNG mtime advanced.
+// =============================================================================
+
+test.describe("--watch", () => {
+  test("modifying the input file re-renders the output", async () => {
+    // Work in an isolated tmp project so we don't touch the repo's blink
+    // fixture (and the watcher gets a clean filesystem to operate on).
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "kicadiff-watch-"));
+    try {
+      const blinkSrc = path.dirname(SCH_FILE);
+      fs.cpSync(blinkSrc, tmp, { recursive: true });
+      // The watcher uses cache-on rerun, so a fresh git repo here is fine —
+      // we don't need any commits, just an existing on-disk file to render.
+      const outDir = path.join(tmp, "out");
+      const target = path.join(tmp, path.basename(SCH_FILE));
+
+      // Spawn the CLI in the background. We can't use spawnSync because
+      // --watch never returns; capture stdout/stderr so we can assert
+      // visible progress lines.
+      const { spawn } = await import("node:child_process");
+      const proc = spawn(CLI, [target, "--watch", "--output-dir", outDir], {
+        cwd: tmp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, KICADIFF_OPEN_CMD: "" },
+      });
+      let stdout = "";
+      let stderr = "";
+      proc.stdout.on("data", (b) => { stdout += b.toString(); });
+      proc.stderr.on("data", (b) => { stderr += b.toString(); });
+      try {
+        // Wait for the initial render to finish — the watcher prints
+        // "watching <file>" once it's set up.
+        await waitFor(() => stdout.includes("watching"), 8000, "initial render");
+
+        // Snapshot mtime of any rendered PNG — re-render must bump it.
+        const pngs = fs.readdirSync(path.join(outDir, "after")).filter((f) => f.endsWith(".png"));
+        expect(pngs.length).toBeGreaterThan(0);
+        const samplePng = path.join(outDir, "after", pngs[0]);
+        const mtimeBefore = fs.statSync(samplePng).mtimeMs;
+
+        // Mutate the schematic. The blink fixture has resistor value "330";
+        // bumping it changes the rendered text and forces a different hash,
+        // which in turn evicts cache and produces fresh PNGs.
+        const orig = fs.readFileSync(target, "utf8");
+        fs.writeFileSync(target, orig.replace(/"330"/g, '"470"'));
+
+        // The watcher polls at 1 s + rerender takes another second, give
+        // it 6 s before giving up. Look for the explicit log line so we
+        // know the watcher fired (avoids false positives from clock skew).
+        await waitFor(
+          () => /re-rendered in \d+ms/.test(stdout),
+          6000,
+          "re-render trigger",
+        );
+        const mtimeAfter = fs.statSync(samplePng).mtimeMs;
+        expect(mtimeAfter).toBeGreaterThan(mtimeBefore);
+      } finally {
+        proc.kill("SIGTERM");
+        await new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+        // Surface anything that went wrong.
+        if (stderr.trim()) console.error("watcher stderr:", stderr);
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Block until `predicate()` returns true or `timeoutMs` elapses. Polls
+ *  every 100 ms. Throws with a helpful message on timeout so test failures
+ *  show what condition wasn't met. */
+async function waitFor(predicate: () => boolean, timeoutMs: number, label: string): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error(`waitFor: ${label} did not happen within ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}

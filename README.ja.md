@@ -106,6 +106,14 @@ kicadiff project/ --open vscode
 kicadiff project/ --open firefox
 kicadiff project/ --open=/usr/bin/open  # 任意のコマンド
 
+# Watch mode: 入力 KiCad ファイルが変わるたびに再レンダリング。
+# Hot reload は viewer 側に委譲する — VSCode Live Preview / live-server
+# 等であれば kicadiff が画像を上書きした瞬間に自動でページが更新される。
+# 素の file:// で開いている場合は kicadiff が小さな画像ポーリング script
+# を HTML に inject するので、F5 無しで描画だけが差し替わる。
+kicadiff project/ --watch
+kicadiff project/ --watch --open vscode
+
 # その他
 kicadiff project/ -v                    # PNG パスまで出すサマリ
 kicadiff project/ -q                    # サマリ抑止

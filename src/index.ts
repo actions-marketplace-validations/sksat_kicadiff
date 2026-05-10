@@ -90,6 +90,10 @@ Options:
   -q, --quiet            Suppress the summary entirely
   --log <level>          Set summary log level: quiet | info | debug (default: info)
   --no-cache             Skip the render cache (default: cached at \$XDG_CACHE_HOME/kicadiff)
+  --watch                Long-running mode: re-render whenever an input KiCad
+                         file changes. Hot reload comes from your viewer —
+                         open the diff HTML in VSCode Live Preview, live-server,
+                         or any auto-reloading viewer for an end-to-end loop.
   --open                 Open diff HTML with xdg-open after rendering
   --open vscode|code     Open in VSCode tab (\`code -r\`)
   --open firefox|...     Open in named browser (firefox, chromium, chrome, etc.)
@@ -147,6 +151,10 @@ interface ParsedArgs {
   noCache?: boolean;
   scope?: FileType;
   open?: string;
+  /** Long-running watch mode: re-render on file change. Hot-reload of the
+   *  viewer is delegated to whatever already serves the HTML (VSCode Live
+   *  Preview, live-server, browsersync, etc.). */
+  watch?: boolean;
 }
 
 /** Known names that can be used after a bare `--open` (with a space).
@@ -239,6 +247,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let logLevel: LogLevel | undefined;
   let noCache = false;
   let open: string | undefined;
+  let watch = false;
 
   for (; i < argv.length; i++) {
     const arg = argv[i];
@@ -279,6 +288,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       mdFileTemplate = argv[++i];
     } else if (arg === "--no-cache") {
       noCache = true;
+    } else if (arg === "--watch") {
+      watch = true;
     } else if (arg === "--verbose" || arg === "-v" || arg === "--debug") {
       logLevel = "debug";
     } else if (arg === "--quiet" || arg === "-q") {
@@ -389,7 +400,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   return {
     input, fromRef, toRef, outputDir, outputHtml, imagesOnly, text, textOnly,
-    markdown, mdTemplate, mdFileTemplate, logLevel, noCache, scope, open,
+    markdown, mdTemplate, mdFileTemplate, logLevel, noCache, scope, open, watch,
   };
 }
 
@@ -475,6 +486,24 @@ async function main(): Promise<void> {
     // --text-only short-circuits rendering entirely — useful when piping the
     // structural diff into another tool without paying for SVG/PNG.
     if (parsed.textOnly) { printTextDiff(parsed); return; }
+
+    // --watch hands off to the long-running watcher: it does the same
+    // initial render, then keeps re-rendering on every input file change.
+    if (parsed.watch) {
+      const { startWatch } = await import("./watch.ts");
+      await startWatch({
+        input: parsed.input,
+        outputDir: parsed.outputDir,
+        outputHtml: parsed.outputHtml,
+        imagesOnly: parsed.imagesOnly,
+        fromRef: parsed.fromRef,
+        toRef: parsed.toRef,
+        open: parsed.open,
+        scope: parsed.scope,
+        noCache: parsed.noCache,
+      });
+      return;
+    }
 
     // --markdown skips HTML viewer generation: the markdown is the deliverable
     // and the viewer would be redundant. Images still render so the markdown
