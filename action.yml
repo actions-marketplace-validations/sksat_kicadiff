@@ -370,20 +370,28 @@ runs:
           exit 0
         fi
 
-        # Wipe and repopulate so deleted KiCad files surface as deletions
-        # in the preview directory too. Only touches *.png at the top
-        # level — sibling docs / READMEs in the same dir survive.
+        # Wipe and repopulate so deleted / now-identical files surface
+        # as removals from the preview directory too. Only touches *.png
+        # at the top level — sibling docs / READMEs in the same dir
+        # survive.
         mkdir -p "$DEST_REL"
         find "$DEST_REL" -maxdepth 1 -type f -name '*.png' -delete
 
-        # kicadiff writes per-side combined PNGs at <out>/{before,after}/<safe>.png.
-        # We pair them up and emit <safe>-{before,after}.png in DEST_REL.
+        # Only push images for files whose rendered combined PNG actually
+        # changed. Identical-byte before/after means no visual diff, and
+        # there's no point burning a row in the comment / a commit byte
+        # for it. kicadiff writes per-side combined PNGs at
+        # <out>/{before,after}/<safe>.png; pair them and skip files
+        # that match.
         if [ -d "$OUT_DIR/after" ]; then
           for src in "$OUT_DIR"/after/*.png; do
             [ -f "$src" ] || continue
             name=$(basename "$src" .png)
-            cp "$src" "$DEST_REL/$name-after.png"
             before_src="$OUT_DIR/before/$name.png"
+            if [ -f "$before_src" ] && cmp -s "$before_src" "$src"; then
+              continue
+            fi
+            cp "$src" "$DEST_REL/$name-after.png"
             if [ -f "$before_src" ]; then
               cp "$before_src" "$DEST_REL/$name-before.png"
             fi
@@ -461,19 +469,25 @@ runs:
         } >> "$TMP"
 
         # ----- Embed before/after combined PNGs -----
-        # When same-branch image hosting is in play we emit raw.gh URLs
-        # (small markdown, no per-image budget pressure). Otherwise we
-        # base64-inline the PNGs as data URIs and watch the budget.
-        # Either way, kicadiff writes per-side combined PNGs at
-        # <out>/{before,after}/<safe>.png — we pair them up by basename
-        # and emit one row per file as a 2-column markdown table.
+        # Files whose rendered output is byte-identical between base
+        # and head are silently dropped — listing "no changes" rows
+        # just adds noise. When same-branch image hosting is in play
+        # we emit raw.gh URLs (small markdown, no per-image budget
+        # pressure). Otherwise we base64-inline as data URIs and watch
+        # the 900 KiB summary budget.
         SKIPPED=0
         TOTAL=0
         if [ -d "$OUT_DIR/after" ]; then
           for after_png in $(find "$OUT_DIR/after" -maxdepth 1 -type f -name '*.png' | sort); do
-            TOTAL=$((TOTAL + 1))
             name="$(basename "$after_png" .png)"
             before_png="$OUT_DIR/before/$name.png"
+
+            # Skip files with no visual diff. cmp returns 0 when bytes
+            # match, so "before exists AND matches" => identical => skip.
+            if [ -f "$before_png" ] && cmp -s "$before_png" "$after_png"; then
+              continue
+            fi
+            TOTAL=$((TOTAL + 1))
 
             if [ -n "${IMAGE_BASE_URL:-}" ]; then
               after_uri="$IMAGE_BASE_URL/$name-after.png"
@@ -575,32 +589,23 @@ runs:
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         set -eu
-        BODY_PATH="$(mktemp -t kicadiff-body.XXXXXX.md)"
-        {
-          echo '<!-- kicadiff:start -->'
-          echo '## 🔍 KiCad visual diff'
-          echo
-          if [ "$HAS_CHANGES" = "true" ]; then
-            echo "Structural change detected by [kicadiff](https://github.com/sksat/kicadiff)."
-          else
-            echo "No structural change detected — the rendered output is byte-identical between base and head."
-          fi
-          echo
-          echo "**Run:** $RUN_URL"
-          if [ -n "${ARTIFACT_URL:-}" ]; then
-            echo
-            echo "**Full report with images:** [download artifact]($ARTIFACT_URL)"
-          fi
-          echo
 
-          # Inline before/after thumbnails when same-branch is wired up.
-          # Without an image base URL we'd have to either base64-embed
-          # (bloats the comment past GitHub's truncation point) or skip
-          # — skipping is the documented behaviour.
-          if [ -n "${IMAGE_BASE_URL:-}" ] && [ -d "$OUT_DIR/after" ]; then
-            for after_png in $(find "$OUT_DIR/after" -maxdepth 1 -type f -name '*.png' | sort); do
-              name="$(basename "$after_png" .png)"
-              before_png="$OUT_DIR/before/$name.png"
+        # Build the per-file rows in a buffer so we can both count them
+        # (for the should-post gate) and reuse the buffer in the body.
+        # Files whose rendered combined PNG is byte-identical between
+        # base and head are silently dropped — listing "no changes"
+        # rows would be noise.
+        ROWS="$(mktemp -t kicadiff-rows.XXXXXX.md)"
+        CHANGED_FILES=0
+        if [ -n "${IMAGE_BASE_URL:-}" ] && [ -d "$OUT_DIR/after" ]; then
+          for after_png in $(find "$OUT_DIR/after" -maxdepth 1 -type f -name '*.png' | sort); do
+            name="$(basename "$after_png" .png)"
+            before_png="$OUT_DIR/before/$name.png"
+            if [ -f "$before_png" ] && cmp -s "$before_png" "$after_png"; then
+              continue
+            fi
+            CHANGED_FILES=$((CHANGED_FILES + 1))
+            {
               echo
               echo "### \`$name\`"
               echo
@@ -613,11 +618,59 @@ runs:
                 printf '| _(new file)_ | ![after](%s/%s-after.png) |\n' \
                   "$IMAGE_BASE_URL" "$name"
               fi
-            done
+            } >> "$ROWS"
+          done
+        elif [ -d "$OUT_DIR/after" ]; then
+          # No image-base URL means we can't embed images — but we
+          # still want CHANGED_FILES set so should-post is accurate.
+          for after_png in "$OUT_DIR"/after/*.png; do
+            [ -f "$after_png" ] || continue
+            name="$(basename "$after_png" .png)"
+            before_png="$OUT_DIR/before/$name.png"
+            if [ -f "$before_png" ] && cmp -s "$before_png" "$after_png"; then
+              continue
+            fi
+            CHANGED_FILES=$((CHANGED_FILES + 1))
+          done
+        fi
+
+        # Should we post anything at all? If neither structural nor
+        # visual diff exists, the only useful output would be a "no
+        # changes" note, and the user explicitly doesn't want that —
+        # keep the PR comment / description untouched.
+        if [ "$HAS_CHANGES" != "true" ] && [ "$CHANGED_FILES" -eq 0 ]; then
+          echo "No structural and no visual diff — skipping comment / description upsert."
+          echo "should-post=false" >> "$GITHUB_OUTPUT"
+          rm -f "$ROWS"
+          exit 0
+        fi
+
+        BODY_PATH="$(mktemp -t kicadiff-body.XXXXXX.md)"
+        {
+          echo '<!-- kicadiff:start -->'
+          echo '## 🔍 KiCad visual diff'
+          echo
+          if [ "$HAS_CHANGES" = "true" ]; then
+            echo "Structural change detected by [kicadiff](https://github.com/sksat/kicadiff)."
+          elif [ "$CHANGED_FILES" -gt 0 ]; then
+            echo "Visual change detected by [kicadiff](https://github.com/sksat/kicadiff) (rendered output differs without component-level changes)."
+          fi
+          echo
+          echo "**Run:** $RUN_URL"
+          if [ -n "${ARTIFACT_URL:-}" ]; then
+            echo
+            echo "**Full report with images:** [download artifact]($ARTIFACT_URL)"
+          fi
+          echo
+
+          # Per-file thumbnails (only files with visible diff). Empty
+          # when there's no image base URL or no changed file.
+          if [ -s "$ROWS" ]; then
+            cat "$ROWS"
             echo
           fi
 
-          if [ -s "$TXT_PATH" ]; then
+          if [ -s "$TXT_PATH" ] && [ "$HAS_CHANGES" = "true" ]; then
             echo '<details><summary>Structural diff</summary>'
             echo
             echo '```diff'
@@ -633,14 +686,16 @@ runs:
           echo
           echo '<!-- kicadiff:end -->'
         } > "$BODY_PATH"
+        rm -f "$ROWS"
         echo "path=$BODY_PATH" >> "$GITHUB_OUTPUT"
+        echo "should-post=true" >> "$GITHUB_OUTPUT"
 
     # ----- Optional: sticky PR comment -----
     # Find the previous kicadiff comment by start-marker and update it
     # in place; otherwise post a fresh one. Avoids comment spam on
     # successive pushes.
     - name: Upsert sticky PR comment
-      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.pr-comment == 'true' && github.event.pull_request.number != '' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.pr-comment == 'true' && github.event.pull_request.number != '' && steps.body.outputs.should-post == 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -666,7 +721,7 @@ runs:
     # python here-doc avoids shell-quoting hell for multi-line bodies
     # that may contain backticks, dollar signs, etc.
     - name: Upsert PR description section
-      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.pr-description == 'true' && github.event.pull_request.number != '' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.pr-description == 'true' && github.event.pull_request.number != '' && steps.body.outputs.should-post == 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
