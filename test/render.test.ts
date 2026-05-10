@@ -153,9 +153,13 @@ test.describe("PCB rendering", () => {
     }
   });
 
-  test("generates diff highlight PNG", () => {
+  test("generates per-side diff highlight PNGs", () => {
+    // The diff overlay is split per side: deletes go on the before-side
+    // PNG (so removed content lights up where it used to be) and adds /
+    // changes go on the after-side PNG.
     runCli([PCB_FILE, "--output-dir", outputDir]);
-    expect(fs.existsSync(path.join(outputDir, `diff/${SAFE_PCB}.png`))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, `diff/${SAFE_PCB}-before.png`))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, `diff/${SAFE_PCB}-after.png`))).toBe(true);
   });
 });
 
@@ -190,9 +194,9 @@ test.describe("HTML output", () => {
 
   test("manifest references .svg for combined and per-layer images", () => {
     // The viewer needs vector sources so users can zoom indefinitely. The
-    // diff overlay (M.diff) stays PNG since it's an ImageMagick output, but
-    // every "live" image (combined, layers, sch pages, sym/fp items) must
-    // be served as SVG.
+    // diff overlay (M.diff) stays PNG since it's a rasterised tri-colour
+    // mask, but every "live" image (combined, layers, sch pages, sym/fp
+    // items) must be served as SVG.
     runCli(["pcb", PCB_FILE, "--output-dir", outputDir]);
     const m = readManifest(path.join(outputDir, PROJECT_HTML)) as any;
     const pcb = m.files[0];
@@ -204,8 +208,10 @@ test.describe("HTML output", () => {
     for (const v of Object.values(pcb.before.layers as Record<string, string>)) {
       expect(v).toMatch(/\.svg$/);
     }
-    // Diff highlight overlay stays PNG.
-    expect(pcb.diff).toMatch(/\.png$/);
+    // Diff highlight overlay stays PNG, split per side (delete on before,
+    // add+change on after).
+    expect(pcb.diff.before).toMatch(/\.png$/);
+    expect(pcb.diff.after).toMatch(/\.png$/);
   });
 
   test("manifest references .svg for schematic combined and pages", () => {

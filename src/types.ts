@@ -57,9 +57,15 @@ export interface FileManifest {
   toRef?: string;
   after?: SideManifest;
   before?: SideManifest;
-  /** Diff highlight image (ImageMagick compare output), present only if both
-   *  before and after were rendered and ImageMagick is available */
-  diff?: string;
+  /** Per-side diff overlay PNGs (transparent base, tri-colour mask). Present
+   *  only when both before and after rendered. The viewer attaches each one
+   *  to the matching side image:
+   *    - `diff.before` carries DELETE pixels (red), so they sit on top of
+   *      the before image where the removed content actually existed.
+   *    - `diff.after` carries ADD (green) and CHANGE (amber) pixels — the
+   *      modified state lives on the after image, so that's where the
+   *      highlight goes. */
+  diff?: { before: string; after: string };
 }
 
 /** Backward-compat alias used by older single-file callers. */

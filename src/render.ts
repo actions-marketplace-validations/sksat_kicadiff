@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import which from "which";
 import VIEWER_HTML from "./viewer-content.ts";
 import type { FileType, Manifest, ProjectManifest, SideManifest } from "./types.ts";
-import { triColorDiff } from "./diff-overlay.ts";
+import { splitDiff } from "./diff-overlay.ts";
 import { Resvg } from "@resvg/resvg-js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -670,14 +670,15 @@ function buildManifest(args: {
   hasBefore: boolean;
   hasAfter: boolean;
   hasDiff?: boolean;
-  diffPng?: string;
+  diffBeforePng?: string;
+  diffAfterPng?: string;
   schRootName?: string;
   fromRef?: string;
   toRef?: string;
 }): Manifest {
   const {
-    relPath, fileType, outputDir, safe, hasBefore, hasAfter, hasDiff, diffPng, schRootName,
-    fromRef, toRef,
+    relPath, fileType, outputDir, safe, hasBefore, hasAfter, hasDiff,
+    diffBeforePng, diffAfterPng, schRootName, fromRef, toRef,
   } = args;
 
   function buildSide(side: "before" | "after"): SideManifest {
@@ -707,7 +708,18 @@ function buildManifest(args: {
   if (hasDiff !== undefined) m.hasDiff = hasDiff;
   if (fromRef !== undefined) m.fromRef = fromRef;
   if (toRef !== undefined) m.toRef = toRef;
-  if (diffPng && fs.existsSync(diffPng)) m.diff = `diff/${safe}.png`;
+  // Per-side diff overlays. Both must exist to set m.diff; the viewer keys
+  // off m.diff to enable the highlight toggle and assumes both sides are
+  // present together.
+  if (
+    diffBeforePng && fs.existsSync(diffBeforePng) &&
+    diffAfterPng && fs.existsSync(diffAfterPng)
+  ) {
+    m.diff = {
+      before: `diff/${safe}-before.png`,
+      after: `diff/${safe}-after.png`,
+    };
+  }
 
   // Per-page hasDiff: when the file has selectable pages (multi-sheet sch,
   // sym/fp libraries with multiple items), mark each page (on both sides)
@@ -1001,22 +1013,28 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     throw new Error(`failed to render either side (file may not exist at any of the refs)`);
   }
 
-  // --- Tri-colour diff overlay (pure JS) ---
+  // --- Tri-colour diff overlay, split per side ---
   // Each pixel is classified as ADD (green), DELETE (red), CHANGE (amber),
-  // or no-change (transparent). See src/diff-overlay.ts for the classifier;
-  // it handles both transparent-background renders (sch / per-layer PCB)
-  // and solid-background renders (PCB combined SVG → PNG).
-  let diffPng: string | undefined;
+  // or no-change (transparent). DELETE goes on a before-side mask so the
+  // removed content lights up where it actually used to be; ADD/CHANGE go
+  // on an after-side mask so they sit on top of the new state. See
+  // src/diff-overlay.ts for the classifier; it handles transparent-bg
+  // renders (sch / per-layer PCB) and solid-bg renders (PCB combined PNG).
+  let diffBeforePng: string | undefined;
+  let diffAfterPng: string | undefined;
   if (hasAfter && hasBefore && fs.existsSync(beforePng) && fs.existsSync(afterPng)) {
     try {
-      const out = triColorDiff(fs.readFileSync(beforePng), fs.readFileSync(afterPng));
+      const out = splitDiff(fs.readFileSync(beforePng), fs.readFileSync(afterPng));
       const diffDir = path.join(outputDir, "diff");
       fs.mkdirSync(diffDir, { recursive: true });
-      diffPng = path.join(diffDir, `${safe}.png`);
-      fs.writeFileSync(diffPng, out);
+      diffBeforePng = path.join(diffDir, `${safe}-before.png`);
+      diffAfterPng = path.join(diffDir, `${safe}-after.png`);
+      fs.writeFileSync(diffBeforePng, out.before);
+      fs.writeFileSync(diffAfterPng, out.after);
     } catch {
       // Dimension mismatch / corrupt PNG — non-fatal, just skip the overlay.
-      diffPng = undefined;
+      diffBeforePng = undefined;
+      diffAfterPng = undefined;
     }
   }
 
@@ -1038,7 +1056,8 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
   }
 
   const manifest = buildManifest({
-    relPath, fileType, outputDir, safe, hasBefore, hasAfter, hasDiff, diffPng, schRootName,
+    relPath, fileType, outputDir, safe, hasBefore, hasAfter, hasDiff,
+    diffBeforePng, diffAfterPng, schRootName,
     fromRef, toRef,
   });
 
@@ -1046,7 +1065,7 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     filePath, relPath, fileType, outputDir,
     afterPng: hasAfter ? afterPng : "",
     beforePng: hasBefore ? beforePng : undefined,
-    diffPng,
+    diffPng: diffAfterPng,
     manifest,
   };
 
@@ -1396,7 +1415,7 @@ function rewriteManifestPaths(m: Manifest, outDir: string, htmlDir: string): Man
   if (m.hasDiff !== undefined) out.hasDiff = m.hasDiff;
   if (m.fromRef !== undefined) out.fromRef = m.fromRef;
   if (m.toRef !== undefined) out.toRef = m.toRef;
-  if (m.diff) out.diff = rewrite(m.diff);
+  if (m.diff) out.diff = { before: rewrite(m.diff.before), after: rewrite(m.diff.after) };
   return out;
 }
 

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
-import { triColorDiff, makeTestPng, DIFF_COLORS } from "../src/diff-overlay.ts";
+import { triColorDiff, splitDiff, makeTestPng, DIFF_COLORS } from "../src/diff-overlay.ts";
 
 // Pure-logic tests. No browser, no kicad-cli. Exercises the classifier on
 // synthetic 4x4 PNGs so we can spell out the expected colour for every pixel.
@@ -99,4 +99,77 @@ test("dimension mismatch throws", () => {
   const before = makeTestPng(2, 2, () => RED_OPAQUE);
   const after = makeTestPng(3, 2, () => RED_OPAQUE);
   expect(() => triColorDiff(before, after)).toThrow(/dimension mismatch/);
+});
+
+// --- splitDiff: per-side overlays ---
+//
+// The viewer wants DELETE pixels overlaid on the BEFORE image (where the
+// removed content actually existed) and ADD / CHANGE pixels on the AFTER
+// image. splitDiff returns two RGBA masks so the viewer can attach them
+// to the matching side without filtering colours in the browser.
+
+test("splitDiff: delete pixel only appears on before-side overlay", () => {
+  const before = makeTestPng(1, 1, () => BLUE_OPAQUE);
+  const after = makeTestPng(1, 1, () => TRANSPARENT);
+  const { before: beforeMask, after: afterMask } = splitDiff(before, after);
+  expect(read(beforeMask, 0, 0)).toEqual([...DIFF_COLORS.remove, 255]);
+  // Nothing on the after side — the deletion is shown where it used to be.
+  expect(read(afterMask, 0, 0)).toEqual([0, 0, 0, 0]);
+});
+
+test("splitDiff: add pixel only appears on after-side overlay", () => {
+  const before = makeTestPng(1, 1, () => TRANSPARENT);
+  const after = makeTestPng(1, 1, () => RED_OPAQUE);
+  const { before: beforeMask, after: afterMask } = splitDiff(before, after);
+  expect(read(beforeMask, 0, 0)).toEqual([0, 0, 0, 0]);
+  expect(read(afterMask, 0, 0)).toEqual([...DIFF_COLORS.add, 255]);
+});
+
+test("splitDiff: change pixel only appears on after-side overlay", () => {
+  const before = makeTestPng(1, 1, () => RED_OPAQUE);
+  const after = makeTestPng(1, 1, () => BLUE_OPAQUE);
+  const { before: beforeMask, after: afterMask } = splitDiff(before, after);
+  // Change reads as "modification at this location"; the modified state is
+  // what's visible on the after image, so that's where the highlight goes.
+  expect(read(beforeMask, 0, 0)).toEqual([0, 0, 0, 0]);
+  expect(read(afterMask, 0, 0)).toEqual([...DIFF_COLORS.change, 255]);
+});
+
+test("splitDiff: identical pixels produce no overlay on either side", () => {
+  const before = makeTestPng(1, 1, () => RED_OPAQUE);
+  const after = makeTestPng(1, 1, () => RED_OPAQUE);
+  const { before: beforeMask, after: afterMask } = splitDiff(before, after);
+  expect(read(beforeMask, 0, 0)).toEqual([0, 0, 0, 0]);
+  expect(read(afterMask, 0, 0)).toEqual([0, 0, 0, 0]);
+});
+
+test("splitDiff: distributes all three categories across the two masks", () => {
+  // Same setup as the triColorDiff combined test, but verifying that each
+  // category lands on the correct side.
+  //   col 0: empty → red    (add)    → after only
+  //   col 1: red   → empty  (remove) → before only
+  //   col 2: red   → green  (change) → after only
+  const before = makeTestPng(3, 1, (x) => (x === 0 ? TRANSPARENT : RED_OPAQUE));
+  const after = makeTestPng(3, 1, (x) => {
+    if (x === 0) return RED_OPAQUE;
+    if (x === 1) return TRANSPARENT;
+    return GREEN_OPAQUE;
+  });
+  const { before: beforeMask, after: afterMask } = splitDiff(before, after);
+
+  // Before overlay: only the deleted pixel at col 1.
+  expect(read(beforeMask, 0, 0)).toEqual([0, 0, 0, 0]);
+  expect(read(beforeMask, 1, 0)).toEqual([...DIFF_COLORS.remove, 255]);
+  expect(read(beforeMask, 2, 0)).toEqual([0, 0, 0, 0]);
+
+  // After overlay: add at col 0, change at col 2, nothing at col 1.
+  expect(read(afterMask, 0, 0)).toEqual([...DIFF_COLORS.add, 255]);
+  expect(read(afterMask, 1, 0)).toEqual([0, 0, 0, 0]);
+  expect(read(afterMask, 2, 0)).toEqual([...DIFF_COLORS.change, 255]);
+});
+
+test("splitDiff: dimension mismatch throws", () => {
+  const before = makeTestPng(2, 2, () => RED_OPAQUE);
+  const after = makeTestPng(3, 2, () => RED_OPAQUE);
+  expect(() => splitDiff(before, after)).toThrow(/dimension mismatch/);
 });

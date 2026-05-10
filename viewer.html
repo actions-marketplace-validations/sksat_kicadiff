@@ -775,17 +775,24 @@ function makeLayerStack(side, id) {
     stack.appendChild(img);
   }
 
-  // Diff highlight overlay (ImageMagick compare output).
-  // Only shown on the root page (currentPage === 0) — diff is computed on
-  // the combined PNG which is the root sheet for schematics.
-  if (M.diff && side === 'after' && currentPage === 0) {
-    const diffImg = document.createElement('img');
-    diffImg.src = M.diff;
-    diffImg.className = 'layer diff-overlay';
-    diffImg.style.zIndex = 200;
-    diffImg.style.display = 'none';
-    diffImg.dataset.diff = '1';
-    stack.appendChild(diffImg);
+  // Diff highlight overlay (per-side tri-colour mask). Splitting deletes
+  // onto the before image and adds/changes onto the after image keeps the
+  // highlight on top of the side that actually shows the affected content
+  // — a removed track lights up where it used to be, not over an empty
+  // spot in the after view. Only shown on the root page (currentPage === 0)
+  // because the diff is computed on the combined PNG, which corresponds
+  // to the root sheet for schematics.
+  if (M.diff && currentPage === 0) {
+    const src = side === 'before' ? M.diff.before : M.diff.after;
+    if (src) {
+      const diffImg = document.createElement('img');
+      diffImg.src = src;
+      diffImg.className = 'layer diff-overlay';
+      diffImg.style.zIndex = 200;
+      diffImg.style.display = 'none';
+      diffImg.dataset.diff = '1';
+      stack.appendChild(diffImg);
+    }
   }
 
   return stack;

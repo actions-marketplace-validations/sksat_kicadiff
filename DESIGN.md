@@ -183,7 +183,19 @@ compare-wrap の width が `calc(var(--zoom,1) * 100%)` で連動する。
   - **赤** (delete): before にあり after に無いピクセル
   - **琥珀** (change/move): 両側に内容があるが色が違うピクセル
 
-  分類は `src/diff-overlay.ts` の `triColorDiff()` で純 JS 実装。
+  overlay は **side ごとに分割して** 配置する:
+  - **delete (赤)** は before 画像の上に重ねる。消えたパーツはまだ
+    before の方には描かれているので、そこに highlight を載せる方が
+    「何があったのか」が見える (after に重ねると空のキャンバスに
+    赤マークが浮くだけになる)。
+  - **add (緑)** / **change (琥珀)** は after 画像の上に重ねる。新しい
+    状態は after で見えているので、その上に highlight を載せる。
+
+  分類は `src/diff-overlay.ts` の `splitDiff()` で純 JS 実装。
+  両側の overlay PNG を返し、render は `diff/<safe>-before.png` /
+  `diff/<safe>-after.png` の 2 ファイルを書き出す。`triColorDiff()` も
+  下位互換 (単一 PNG に 3 色を混ぜる) として残してあるが、viewer は
+  splitDiff の出力を side ごとに attach する。
   PCB の combined PNG (KiCad の board background あり) は corner pixel を
   サンプルして「背景色」を判定し、それに近いピクセルを empty 扱いに
   する。schematic / 個別レイヤーは透過背景なので alpha だけで判定。
@@ -207,7 +219,10 @@ FileManifest {
   toRef?: string;        // 比較先の ref ("" = working tree)
   after: SideManifest;
   before?: SideManifest; // hasBefore のときのみ
-  diff?: string;         // 差分ハイライト PNG (ImageMagick の出力)
+  diff?: { before: string; after: string };
+                         // 差分ハイライト PNG を side ごとに分割。
+                         // before: delete (赤) のみ。
+                         // after:  add (緑) + change (琥珀)。
 }
 
 SideManifest {
@@ -239,7 +254,8 @@ PNG は次の用途で `${side}/${safe}.png` / `${pagesDir}/<name>.png` /
 
 - `hasDiff` の byte 比較
 - `--md` レポート用の side-by-side 画像
-- 差分ハイライト overlay (`triColorDiff` の出力 — `M.diff`)
+- 差分ハイライト overlay (`splitDiff` の出力 — `M.diff.before` /
+  `M.diff.after` の 2 枚)
 
 ラスタ化は `@resvg/resvg-js` を介して in-process で行うので、ランタイム
 には外部ツール (旧 `rsvg-convert`) を必要としない。

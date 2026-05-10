@@ -1,7 +1,15 @@
 /**
  * Tri-colour visual diff: classifies each pixel of two same-sized PNG buffers
- * as added (green), deleted (red), or moved/changed (yellow), and writes a
- * transparent-base RGBA buffer that the viewer overlays on the "after" image.
+ * as added (green), deleted (red), or moved/changed (yellow). Two output
+ * shapes:
+ *   - triColorDiff() — single combined RGBA mask with all three categories.
+ *     Used by tests and as the implementation core; legacy single-overlay
+ *     callers still work against it.
+ *   - splitDiff()    — pair of RGBA masks; deletes go on the "before" mask
+ *     (where the removed content actually existed in the prior render), adds
+ *     and changes go on the "after" mask (where the new state is visible).
+ *     This is what the viewer attaches per-side so a vanished trace shows up
+ *     under the BEFORE image, not over an empty spot in the AFTER image.
  *
  * The classification is intentionally simple — kicadiff is not a vector
  * diffing tool, so we work on rasterised output. Two regimes:
@@ -76,12 +84,19 @@ function isEmpty(
   return pixelDistance(px, bg) <= bgTolerance;
 }
 
-/** Classify each pixel of `before` and `after` and return an RGBA mask. */
-export function triColorDiff(
+type Category = "add" | "remove" | "change" | null;
+
+/** Shared classifier core. Decodes both PNGs, sets up the background regime,
+ *  and walks every pixel handing the category off to a per-pixel writer. The
+ *  two public entry points (triColorDiff, splitDiff) only differ in how many
+ *  output buffers they fill and which categories land in each one. */
+function classifyPixels(
   before: Buffer,
   after: Buffer,
-  opts: DiffOptions = {},
-): Buffer {
+  opts: DiffOptions,
+  callerName: string,
+  visit: (i: number, category: Category) => void,
+): { width: number; height: number } {
   const colorTolerance = opts.colorTolerance ?? 25;
   const alphaCutoff = opts.alphaCutoff ?? 16;
 
@@ -89,7 +104,7 @@ export function triColorDiff(
   const a = PNG.sync.read(after);
   if (b.width !== a.width || b.height !== a.height) {
     throw new Error(
-      `triColorDiff: dimension mismatch (before ${b.width}x${b.height}, after ${a.width}x${a.height})`,
+      `${callerName}: dimension mismatch (before ${b.width}x${b.height}, after ${a.width}x${a.height})`,
     );
   }
   const w = b.width;
@@ -113,7 +128,6 @@ export function triColorDiff(
   const bgBefore = useSolidBg ? bgBeforeRaw : null;
   const bgAfter = useSolidBg ? bgAfterRaw : null;
 
-  const out = new PNG({ width: w, height: h });
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (w * y + x) << 2;
@@ -122,23 +136,84 @@ export function triColorDiff(
       const beforeEmpty = isEmpty(bp, bgBefore, alphaCutoff, bgTolerance);
       const afterEmpty = isEmpty(ap, bgAfter, alphaCutoff, bgTolerance);
 
-      let color: readonly [number, number, number] | null = null;
-      if (beforeEmpty && !afterEmpty) color = DIFF_COLORS.add;
-      else if (!beforeEmpty && afterEmpty) color = DIFF_COLORS.remove;
+      let category: Category = null;
+      if (beforeEmpty && !afterEmpty) category = "add";
+      else if (!beforeEmpty && afterEmpty) category = "remove";
       else if (!beforeEmpty && !afterEmpty && pixelDistance(bp, ap) > colorTolerance) {
-        color = DIFF_COLORS.change;
+        category = "change";
       }
-      if (color) {
-        out.data[i]     = color[0];
-        out.data[i + 1] = color[1];
-        out.data[i + 2] = color[2];
-        out.data[i + 3] = 255;
-      } else {
-        out.data[i + 3] = 0; // fully transparent — no change
-      }
+      visit(i, category);
     }
   }
+  return { width: w, height: h };
+}
+
+/** Write a single classified colour into an RGBA buffer at offset `i`. */
+function paint(buf: Buffer, i: number, color: readonly [number, number, number]): void {
+  buf[i]     = color[0];
+  buf[i + 1] = color[1];
+  buf[i + 2] = color[2];
+  buf[i + 3] = 255;
+}
+
+/** Classify each pixel of `before` and `after` and return one combined RGBA
+ *  mask with all three categories. Kept for backwards compatibility and
+ *  because the unit tests find a single-image output simpler to reason
+ *  about. The viewer uses splitDiff() instead so deletes can sit on top of
+ *  the before-side image. */
+export function triColorDiff(
+  before: Buffer,
+  after: Buffer,
+  opts: DiffOptions = {},
+): Buffer {
+  // We need width/height up-front to allocate the PNG, so peek at the
+  // before image's header. classifyPixels decodes again internally; for the
+  // test-sized inputs we run on, the cost is negligible.
+  const head = PNG.sync.read(before);
+  const out = new PNG({ width: head.width, height: head.height });
+  classifyPixels(before, after, opts, "triColorDiff", (i, cat) => {
+    if (cat === "add") paint(out.data, i, DIFF_COLORS.add);
+    else if (cat === "remove") paint(out.data, i, DIFF_COLORS.remove);
+    else if (cat === "change") paint(out.data, i, DIFF_COLORS.change);
+    else out.data[i + 3] = 0;
+  });
   return PNG.sync.write(out);
+}
+
+/** Classify pixels and return *two* RGBA masks: deletes on the before-side
+ *  mask, adds + changes on the after-side mask. The viewer attaches each
+ *  mask to its matching image so the highlight always sits on top of the
+ *  side that actually shows the affected content. */
+export function splitDiff(
+  before: Buffer,
+  after: Buffer,
+  opts: DiffOptions = {},
+): { before: Buffer; after: Buffer } {
+  // Same header peek as triColorDiff — splitDiff has to size two output
+  // buffers ahead of the per-pixel walk. classifyPixels validates the after
+  // side's dimensions match, so an inconsistent pair still throws cleanly.
+  const head = PNG.sync.read(before);
+  const beforeOut = new PNG({ width: head.width, height: head.height });
+  const afterOut = new PNG({ width: head.width, height: head.height });
+  classifyPixels(before, after, opts, "splitDiff", (i, cat) => {
+    if (cat === "remove") {
+      paint(beforeOut.data, i, DIFF_COLORS.remove);
+      afterOut.data[i + 3] = 0;
+    } else if (cat === "add") {
+      paint(afterOut.data, i, DIFF_COLORS.add);
+      beforeOut.data[i + 3] = 0;
+    } else if (cat === "change") {
+      paint(afterOut.data, i, DIFF_COLORS.change);
+      beforeOut.data[i + 3] = 0;
+    } else {
+      beforeOut.data[i + 3] = 0;
+      afterOut.data[i + 3] = 0;
+    }
+  });
+  return {
+    before: PNG.sync.write(beforeOut),
+    after: PNG.sync.write(afterOut),
+  };
 }
 
 /** Encode a synthetic PNG. Test helper. */
