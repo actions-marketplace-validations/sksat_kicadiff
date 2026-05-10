@@ -79,10 +79,19 @@ jobs:
       # install, the markdown + text-only runs, the artifact upload, the
       # job summary (with inline images), the sticky comment, and the PR
       # description section. The workflow only has to set the toggles.
+      #
+      # `path` points at examples/mcu-board because this repo holds the
+      # kicadiff source itself, not a single KiCad project at the root.
+      # kicadiff's input resolver expects either a project directory (one
+      # containing a .kicad_pro) or an explicit KiCad file; passing the
+      # repo root here would fail with "no KiCad files found". A
+      # downstream consumer who keeps their board at the repo root can
+      # leave this as the action's default ("."), or point it at their
+      # project subdirectory.
       - name: kicadiff
         uses: ./
         with:
-          path: "."
+          path: examples/mcu-board
           install-kicadiff: skip
           upload-artifact: "true"
           pr-comment: "true"
