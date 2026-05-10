@@ -1,14 +1,25 @@
-# Composite action: render a kicadiff visual diff for a pull request.
+# Composite action: render a kicadiff visual diff and optionally publish it.
 #
 # Wraps the `kicadiff --md` invocation plus the surrounding glue (toolchain
 # install, KiCad install, output staging) so a caller workflow only has to
-# point at the path it cares about.
+# point at the path it cares about. Optional integrations let the action
+# also upload a build artifact, write a workflow job summary (with inline
+# images), upsert a sticky PR comment, and update a section of the PR
+# description — each gated by its own input so a workflow can opt into
+# only what it needs.
 #
-# Image embedding strategy: this action produces a self-contained markdown
-# report **with images** in the output directory (suitable for upload as an
-# artifact) and a **text-only** structural diff (suitable for inlining into
-# a PR comment / description, where image references wouldn't resolve). The
-# caller decides which to use where.
+# Image embedding strategy:
+#   - The markdown report in the output directory uses relative `![](...)`
+#     references that resolve when the directory is downloaded as an
+#     artifact. That's the rich, full-resolution view.
+#   - The job summary embeds combined before/after PNGs as base64 data
+#     URIs so the run page renders them inline without any extra hosting.
+#     Data URIs are bounded by the per-step 1 MiB summary limit; if a
+#     project's images would overflow that, we emit ::warning:: and link
+#     to the artifact for the rest.
+#   - PR comment + PR description don't get inline images — GitHub
+#     truncates large comment bodies and we want the text to stay
+#     readable. Both link to the artifact for full images.
 
 name: kicadiff
 description: Render a visual diff for KiCad files between two git refs.
@@ -60,6 +71,59 @@ inputs:
     required: false
     default: "skip"
 
+  # ----- Optional publishing toggles -----
+  job-summary:
+    description: |
+      "true" to write the structural diff and inline before/after images
+      to GITHUB_STEP_SUMMARY so it renders on the workflow run page
+      without any extra hosting. Defaults on (cheap and side-effect
+      free); set to "false" to skip.
+    required: false
+    default: "true"
+  upload-artifact:
+    description: |
+      "true" to upload the output directory as a build artifact (with
+      images, HTML, and markdown). Defaults off so the action stays
+      cheap when a caller only wants the inline summary.
+    required: false
+    default: "false"
+  artifact-name:
+    description: |
+      Artifact name. Empty string falls back to `kicadiff-pr-<num>`
+      inside a pull_request event, else `kicadiff-output`. Honoured
+      only when upload-artifact is true.
+    required: false
+    default: ""
+  artifact-retention-days:
+    description: |
+      How long the uploaded artifact is retained. The default (14 days)
+      covers most review cycles without keeping rendered PNGs around
+      forever. Honoured only when upload-artifact is true.
+    required: false
+    default: "14"
+  pr-comment:
+    description: |
+      "true" to upsert a sticky kicadiff comment on the PR, identified
+      by an HTML marker so successive runs replace it instead of
+      stacking. Requires the workflow to grant pull-requests: write and
+      to be running in a pull_request event. No-op outside a PR.
+    required: false
+    default: "false"
+  pr-description:
+    description: |
+      "true" to insert / update a kicadiff section in the PR description,
+      bracketed by HTML markers so author-written content outside the
+      block is preserved. Requires pull-requests: write. No-op outside
+      a PR.
+    required: false
+    default: "false"
+  github-token:
+    description: |
+      Token used for the gh CLI (PR comment / description upserts).
+      Defaults to the workflow's GITHUB_TOKEN.
+    required: false
+    default: ${{ github.token }}
+
 outputs:
   markdown-path:
     description: Path to the generated markdown report (with image links).
@@ -74,8 +138,13 @@ outputs:
     description: |
       "true" when the structural text diff is non-empty (i.e. something
       changed between the two refs), "false" otherwise. Useful for
-      skipping comment posting on no-op runs.
+      gating downstream notifications.
     value: ${{ steps.run.outputs.has-changes }}
+  artifact-url:
+    description: |
+      URL of the uploaded artifact when upload-artifact was true.
+      Empty otherwise.
+    value: ${{ steps.upload.outputs.artifact-url }}
 
 runs:
   using: composite
@@ -110,45 +179,33 @@ runs:
         INPUT_TO: ${{ inputs.to-ref }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
         INPUT_INSTALL: ${{ inputs.install-kicadiff }}
-        # Defaults for pull_request context. Outside a PR these are empty
-        # and we fall back to HEAD~1 for from-ref.
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -eu
 
-        # ----- Resolve the kicadiff command -----
         case "$INPUT_INSTALL" in
           skip) KICADIFF_CMD=(kicadiff) ;;
           bunx) KICADIFF_CMD=(bunx --bun kicadiff) ;;
           *)    KICADIFF_CMD=(bunx --bun "kicadiff@$INPUT_INSTALL") ;;
         esac
 
-        # ----- Resolve refs -----
         # Priority: explicit input > PR event context > HEAD~1.
         FROM="${INPUT_FROM:-${PR_BASE_SHA:-HEAD~1}}"
         TO="${INPUT_TO:-${PR_HEAD_SHA:-}}"
         echo "kicadiff from-ref: $FROM"
         echo "kicadiff to-ref:   ${TO:-<working tree>}"
 
-        # Build ref args: --from is always set; --to only when non-empty
-        # so the working-tree default kicks in cleanly.
         REF_ARGS=(--from "$FROM")
         if [ -n "$TO" ]; then
           REF_ARGS+=(--to "$TO")
         fi
 
-        # ----- Output paths -----
-        # Resolve output-dir to an absolute path so callers don't have to
-        # care about cwd in subsequent steps.
         mkdir -p "$INPUT_OUTPUT_DIR"
         OUT_DIR="$(cd "$INPUT_OUTPUT_DIR" && pwd)"
         MD_PATH="$OUT_DIR/kicadiff-report.md"
         TXT_PATH="$OUT_DIR/kicadiff-report.txt"
 
-        # ----- Run 1: markdown + images (for the artifact) -----
-        # `--md --output` writes the markdown next to the images so its
-        # relative refs resolve when the artifact is downloaded as a dir.
         echo "::group::kicadiff --md"
         "${KICADIFF_CMD[@]}" "${REF_ARGS[@]}" --md \
           --output "$MD_PATH" \
@@ -156,29 +213,294 @@ runs:
           -- "$INPUT_PATH"
         echo "::endgroup::"
 
-        # ----- Run 2: text-only structural diff (for the comment body) -----
-        # Cache makes this near-free since the renders are content-addressed
-        # and run 1 already populated the cache.
+        # Cache makes this near-free since run 1 populated it.
         echo "::group::kicadiff --text-only"
         "${KICADIFF_CMD[@]}" "${REF_ARGS[@]}" --text-only \
           -- "$INPUT_PATH" \
           | tee "$TXT_PATH"
         echo "::endgroup::"
 
-        # ----- Detect "any changes" -----
-        # A non-empty structural body has a marker line we can grep for.
-        # Be liberal: the comment poster also gets the raw text and can
-        # decide whether to skip its own posting.
         if [ -s "$TXT_PATH" ] && grep -qE "^(Added|Removed|Changed|\+|-)" "$TXT_PATH"; then
           HAS_CHANGES=true
         else
           HAS_CHANGES=false
         fi
 
-        # ----- Outputs -----
         {
           echo "markdown-path=$MD_PATH"
           echo "text-path=$TXT_PATH"
           echo "output-dir=$OUT_DIR"
           echo "has-changes=$HAS_CHANGES"
         } >> "$GITHUB_OUTPUT"
+
+    # ----- Optional: upload the rendered output as an artifact -----
+    # Resolving the artifact name happens in a tiny shell shim because
+    # composite-action input defaults can't reference github.* expressions
+    # the way job-level expressions can; we want the PR-numbered fallback
+    # to "just work" without forcing every caller to pass it.
+    - name: Resolve artifact name
+      id: artifact-name
+      if: ${{ inputs.upload-artifact == 'true' }}
+      shell: bash
+      env:
+        EXPLICIT_NAME: ${{ inputs.artifact-name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -eu
+        if [ -n "$EXPLICIT_NAME" ]; then
+          NAME="$EXPLICIT_NAME"
+        elif [ -n "$PR_NUMBER" ]; then
+          NAME="kicadiff-pr-$PR_NUMBER"
+        else
+          NAME="kicadiff-output"
+        fi
+        echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Upload artifact
+      id: upload
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v5.0.0
+      with:
+        name: ${{ steps.artifact-name.outputs.name }}
+        path: ${{ steps.run.outputs.output-dir }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+        if-no-files-found: warn
+
+    # ----- Optional: write the report into the run-page summary -----
+    # Inlines combined before/after PNGs as base64 data URIs so reviewers
+    # can see the diff on the run page without downloading anything.
+    # Step summary is capped at 1 MiB; if the encoded images plus the
+    # markdown body would exceed ~900 KiB (we leave a margin) we drop
+    # the remaining images, emit ::warning::, and tell the reader to
+    # check the artifact for the full set.
+    - name: Write job summary
+      if: ${{ inputs.job-summary == 'true' }}
+      shell: bash
+      env:
+        MD_PATH: ${{ steps.run.outputs.markdown-path }}
+        TXT_PATH: ${{ steps.run.outputs.text-path }}
+        HAS_CHANGES: ${{ steps.run.outputs.has-changes }}
+        OUT_DIR: ${{ steps.run.outputs.output-dir }}
+        ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+      run: |
+        set -eu
+
+        BUDGET=921600   # 900 KiB; per-step summary cap is 1 MiB.
+
+        # The summary builds in a temp file; we measure its size as we
+        # add each section so the budget check stays cheap and visible.
+        TMP="$(mktemp -t kicadiff-summary.XXXXXX.md)"
+
+        {
+          echo '## 🔍 KiCad visual diff'
+          echo
+          if [ "$HAS_CHANGES" = "true" ]; then
+            echo "Structural change detected."
+          else
+            echo "No structural change detected — the rendered output is byte-identical between base and head."
+          fi
+          echo
+          if [ -n "${ARTIFACT_URL:-}" ]; then
+            echo "**Full report with images:** [download artifact]($ARTIFACT_URL)"
+            echo
+          fi
+        } >> "$TMP"
+
+        # ----- Inline before/after combined PNGs as data URIs -----
+        # kicadiff writes per-side combined PNGs at <out>/before/<safe>.png
+        # and <out>/after/<safe>.png. We pair them up by basename and emit
+        # one row per file as a 2-column markdown table.
+        SKIPPED=0
+        TOTAL=0
+        if [ -d "$OUT_DIR/after" ]; then
+          # Iterate over after-side combined PNGs; pair with before by name.
+          # Sort so the order stays deterministic across runs.
+          for after_png in $(find "$OUT_DIR/after" -maxdepth 1 -type f -name '*.png' | sort); do
+            TOTAL=$((TOTAL + 1))
+            name="$(basename "$after_png" .png)"
+            before_png="$OUT_DIR/before/$name.png"
+
+            after_b64="$(base64 -w0 "$after_png")"
+            after_uri="data:image/png;base64,$after_b64"
+            if [ -f "$before_png" ]; then
+              before_b64="$(base64 -w0 "$before_png")"
+              before_uri="data:image/png;base64,$before_b64"
+            else
+              before_uri=""
+            fi
+
+            # Compose this entry's markdown into a buffer so we can size
+            # it before deciding whether it fits in the budget.
+            ENTRY="$(mktemp -t kicadiff-entry.XXXXXX.md)"
+            {
+              echo
+              echo "### \`$name\`"
+              echo
+              echo "| before | after |"
+              echo "|---|---|"
+              if [ -n "$before_uri" ]; then
+                printf '| ![before](%s) | ![after](%s) |\n' "$before_uri" "$after_uri"
+              else
+                printf '| _(new file)_ | ![after](%s) |\n' "$after_uri"
+              fi
+            } > "$ENTRY"
+
+            current_size=$(wc -c < "$TMP")
+            entry_size=$(wc -c < "$ENTRY")
+            if [ $((current_size + entry_size)) -gt "$BUDGET" ]; then
+              SKIPPED=$((SKIPPED + 1))
+              rm -f "$ENTRY"
+              continue
+            fi
+            cat "$ENTRY" >> "$TMP"
+            rm -f "$ENTRY"
+          done
+        fi
+
+        if [ "$SKIPPED" -gt 0 ]; then
+          # GITHUB_STEP_SUMMARY annotations don't render as workflow
+          # warnings; emit a real ::warning:: too so it surfaces on the
+          # run page and in the job log.
+          echo "::warning::kicadiff: $SKIPPED of $TOTAL images skipped from job summary (1 MiB step-summary cap). Full set is in the artifact."
+          {
+            echo
+            echo "> ⚠️ **$SKIPPED of $TOTAL images omitted** to fit the 1 MiB job-summary limit. Full set is in the artifact."
+          } >> "$TMP"
+        fi
+
+        # ----- Append structural diff (text), capped to fit the budget -----
+        if [ -s "$MD_PATH" ]; then
+          remaining=$((BUDGET - $(wc -c < "$TMP")))
+          if [ "$remaining" -gt 0 ]; then
+            # Drop the markdown's own image lines — those reference relative
+            # paths that won't resolve from the summary's context, and the
+            # rendered images are already inlined above as data URIs.
+            echo >> "$TMP"
+            sed -E '/!\[[^]]*\]\([^)]+\)/d' "$MD_PATH" \
+              | head -c "$remaining" >> "$TMP"
+          fi
+        elif [ -s "$TXT_PATH" ]; then
+          remaining=$((BUDGET - $(wc -c < "$TMP")))
+          if [ "$remaining" -gt 0 ]; then
+            {
+              echo
+              echo '```diff'
+              head -c "$remaining" "$TXT_PATH"
+              echo '```'
+            } >> "$TMP"
+          fi
+        fi
+
+        cat "$TMP" >> "$GITHUB_STEP_SUMMARY"
+        rm -f "$TMP"
+
+    # ----- Build the body shared by PR comment + PR description -----
+    # Run unconditionally (cheap) so a caller flipping pr-comment on
+    # mid-run doesn't have to also flip a separate compose flag.
+    - name: Compose PR body
+      id: body
+      if: ${{ inputs.pr-comment == 'true' || inputs.pr-description == 'true' }}
+      shell: bash
+      env:
+        TXT_PATH: ${{ steps.run.outputs.text-path }}
+        HAS_CHANGES: ${{ steps.run.outputs.has-changes }}
+        ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -eu
+        BODY_PATH="$(mktemp -t kicadiff-body.XXXXXX.md)"
+        {
+          echo '<!-- kicadiff:start -->'
+          echo '## 🔍 KiCad visual diff'
+          echo
+          if [ "$HAS_CHANGES" = "true" ]; then
+            echo "Structural change detected by [kicadiff](https://github.com/sksat/kicadiff)."
+          else
+            echo "No structural change detected — the rendered output is byte-identical between base and head."
+          fi
+          echo
+          echo "**Run:** $RUN_URL"
+          if [ -n "${ARTIFACT_URL:-}" ]; then
+            echo
+            echo "**Full report with images:** [download artifact]($ARTIFACT_URL)"
+          fi
+          echo
+          if [ -s "$TXT_PATH" ]; then
+            echo '<details><summary>Structural diff</summary>'
+            echo
+            echo '```diff'
+            head -c 50000 "$TXT_PATH"
+            if [ "$(wc -c < "$TXT_PATH")" -gt 50000 ]; then
+              echo
+              echo '... (truncated — full diff in the artifact / run summary)'
+            fi
+            echo '```'
+            echo
+            echo '</details>'
+          fi
+          echo
+          echo '<!-- kicadiff:end -->'
+        } > "$BODY_PATH"
+        echo "path=$BODY_PATH" >> "$GITHUB_OUTPUT"
+
+    # ----- Optional: sticky PR comment -----
+    # Find the previous kicadiff comment by start-marker and update it
+    # in place; otherwise post a fresh one. Avoids comment spam on
+    # successive pushes.
+    - name: Upsert sticky PR comment
+      if: ${{ inputs.pr-comment == 'true' && github.event.pull_request.number != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        BODY_PATH: ${{ steps.body.outputs.path }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -eu
+        existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- kicadiff:start -->")) | .id' \
+          | head -n 1)
+        if [ -n "$existing" ]; then
+          echo "Updating existing kicadiff comment $existing"
+          gh api -X PATCH "repos/$REPO/issues/comments/$existing" \
+            -F "body=@$BODY_PATH" > /dev/null
+        else
+          echo "Posting new kicadiff comment"
+          gh pr comment "$PR" --repo "$REPO" --body-file "$BODY_PATH"
+        fi
+
+    # ----- Optional: PR description section upsert -----
+    # Replace the marker block in place if present, else append. The
+    # python here-doc avoids shell-quoting hell for multi-line bodies
+    # that may contain backticks, dollar signs, etc.
+    - name: Upsert PR description section
+      if: ${{ inputs.pr-description == 'true' && github.event.pull_request.number != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        BODY_PATH: ${{ steps.body.outputs.path }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -eu
+        export CURRENT_BODY
+        CURRENT_BODY=$(gh pr view "$PR" --repo "$REPO" --json body --jq .body)
+        export NEW_SECTION
+        NEW_SECTION=$(cat "$BODY_PATH")
+        new_body_path="$(mktemp -t kicadiff-desc.XXXXXX.md)"
+        python3 - <<'PY' > "$new_body_path"
+        import os, re, sys
+        current = os.environ.get("CURRENT_BODY", "")
+        new = os.environ["NEW_SECTION"]
+        pattern = re.compile(
+            r"<!-- kicadiff:start -->.*?<!-- kicadiff:end -->",
+            re.DOTALL,
+        )
+        if pattern.search(current):
+            out = pattern.sub(new, current)
+        else:
+            sep = "\n\n" if current.strip() else ""
+            out = current + sep + new
+        sys.stdout.write(out)
+        PY
+        gh pr edit "$PR" --repo "$REPO" --body-file "$new_body_path"
