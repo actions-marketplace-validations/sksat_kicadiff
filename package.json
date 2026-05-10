@@ -1,6 +1,6 @@
 {
   "name": "kicadiff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Visual diff tool for KiCad PCB and schematic files",
   "type": "module",
   "bin": {
@@ -36,7 +36,7 @@
     "visual-diff"
   ],
   "author": "sksat <sksat@sksat.net>",
-  "license": "ISC",
+  "license": "MIT",
   "homepage": "https://github.com/sksat/kicadiff#readme",
   "repository": {
     "type": "git",
