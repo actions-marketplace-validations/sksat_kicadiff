@@ -56,15 +56,20 @@ header h1{font-size:13px;font-weight:normal;white-space:nowrap;overflow:hidden;t
 .pane-label.before{background:#3e2020;color:#f48771}
 .pane-label.after{background:#203e20;color:#89d185}
 /* pane-body is the scroll viewport. We use display:flex so the layer-stack
-   gets stretched vertically (align-items:stretch is the flex default) — this
-   matches the previous layout where the wrap's bounding box was the body
-   height, with overflowing image content scrolling. justify-content stays
-   at its flex-start default so zoom > 1 leaves scrollbar reach to the
-   image's left edge (justify-content:center would clip pan range).
+   sits at the top-left and the image-driven sizer drives layout.
+   `align-items:flex-start` (rather than the default `stretch`) is critical
+   when zoomed in: the IMG inside layer-stack grows taller than the visible
+   pane-body, and we want the layer-stack — which carries the canvas
+   background colour — to grow with it instead of being capped at the
+   viewport height. min-height:100% then keeps the canvas background
+   filling the visible area when the IMG happens to be SMALLER than the
+   viewport (e.g. zoom = 1 and a tiny board). justify-content stays at its
+   flex-start default so zoom > 1 leaves scrollbar reach to the image's
+   left edge (justify-content:center would clip pan range).
    Pan is bound to right-click drag (see JS); leaving the cursor at default
    keeps left-click free for UI interactions. */
-.pane-body{flex:1;overflow:auto;padding:4px;display:flex}
-.pane-body > .layer-stack{width:calc(var(--zoom,1) * 100%);flex-shrink:0}
+.pane-body{flex:1;overflow:auto;padding:4px;display:flex;align-items:flex-start}
+.pane-body > .layer-stack{width:calc(var(--zoom,1) * 100%);min-height:100%;flex-shrink:0}
 
 /* --- Layer stack ---
    Layers are stacked with position:absolute. The first visible layer stays
@@ -87,7 +92,7 @@ body[data-type="sch"] .layer-stack{background:#f5f5f5}
    viewport (calc with --zoom): 100% at zoom=1 (fits the body's content area),
    >100% when zoomed in so the body's overflow:auto exposes scrollbars.
    The two layer-stacks (base + over) inside fill compare-wrap completely. */
-.compare-wrap{position:relative;width:calc(var(--zoom,1) * 100%);flex-shrink:0}
+.compare-wrap{position:relative;width:calc(var(--zoom,1) * 100%);min-height:100%;flex-shrink:0}
 .compare-wrap .layer-stack{width:100%;margin:0}
 /* over-stack sits on top of the base layer-stack, same dimensions.
    background prevents the base from bleeding through semi-transparent
@@ -103,11 +108,13 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 .ovl{flex-direction:column;overflow:hidden}
 .ovl-controls{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:4px 12px;background:#2d2d2d;border-bottom:1px solid #3c3c3c;font-size:12px}
 .ovl-controls input[type=range]{width:200px;accent-color:#007acc}
-/* Scrollable image area. display:flex (without justify-content:center) so
-   the compare-wrap gets stretched to body height (bounding-box-wise) while
-   any oversized content scrolls left-aligned — flex-start default keeps the
-   image's left edge reachable when zoomed > 1. */
-.ovl-body{flex:1;overflow:auto;padding:4px;display:flex}
+/* Scrollable image area. align-items:flex-start (rather than the flex
+   default `stretch`) lets the compare-wrap grow with the IMG when zoomed
+   in — without it, the canvas background ends at the viewport height
+   while the IMG keeps going, exposing page background under the bottom
+   of the rendered board. justify-content stays at flex-start so zoom>1
+   leaves scrollbar reach to the image's left edge. */
+.ovl-body{flex:1;overflow:auto;padding:4px;display:flex;align-items:flex-start}
 
 /* --- Swipe ---
    After is the base, before is overlaid with clip-path:inset() to reveal
@@ -121,7 +128,7 @@ body[data-type="sch"] .compare-wrap .over-stack{background:#f5f5f5}
 /* Controls bar: same height as overlay's, provides visual space for the
    swipe handle and aligns the image start position with overlay mode. */
 .swp-controls{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:4px 12px;background:#2d2d2d;border-bottom:1px solid #3c3c3c;font-size:12px;cursor:col-resize}
-.swp-body{flex:1;overflow:auto;padding:4px;cursor:col-resize;display:flex}
+.swp-body{flex:1;overflow:auto;padding:4px;cursor:col-resize;display:flex;align-items:flex-start}
 /* Divider spans the entire swp view height (controls bar + image body).
    Positioned as a direct child of swp (not compare-wrap) so it extends
    into the controls bar. Left position is computed in JS based on

@@ -371,3 +371,45 @@ test.describe("Resize", () => {
     expect(dividerBox!.x).toBeGreaterThan(0);
   });
 });
+
+// =============================================================================
+// Zoom + scroll: layer-stack background must cover the full image, not just
+// the originally-visible viewport height. Without this, scrolling down a
+// heavily-zoomed render exposes a strip of page background underneath the
+// IMG content because the flex container had stretched the layer-stack only
+// to its own height.
+// =============================================================================
+
+test.describe("Zoom and background coverage", () => {
+  test("layer-stack height covers the full IMG when zoomed in", async ({
+    page,
+  }) => {
+    // Side-by-Side gets us into a scrollable .pane-body whose layout matches
+    // the bug repro (overlay/swipe also use pane-body indirectly via
+    // compare-wrap). Force a small viewport + heavy zoom so the IMG is
+    // definitely larger than the visible viewport vertically.
+    await page.click('button[data-view="sbs"]');
+    await page.evaluate(() => document.documentElement.style.setProperty("--zoom", "4"));
+    await page.setViewportSize({ width: 600, height: 400 });
+    await page.waitForTimeout(200);
+
+    // Compare layer-stack height vs IMG height in the after pane. They
+    // should match — if the layer-stack only stretches to viewport height
+    // while the IMG grows with zoom, the bg ends partway down and the
+    // remaining IMG body sits on the page background instead.
+    const dims = await page.evaluate(() => {
+      const stack = document.querySelector<HTMLElement>(
+        "#view-sbs .pane:last-child .layer-stack",
+      );
+      const img = stack?.querySelector<HTMLImageElement>("img");
+      if (!stack || !img) return null;
+      return {
+        stackH: stack.getBoundingClientRect().height,
+        imgH: img.getBoundingClientRect().height,
+      };
+    });
+    expect(dims).not.toBeNull();
+    // Allow 1px tolerance for sub-pixel rounding.
+    expect(dims!.stackH).toBeGreaterThanOrEqual(dims!.imgH - 1);
+  });
+});
