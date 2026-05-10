@@ -1,0 +1,184 @@
+# Composite action: render a kicadiff visual diff for a pull request.
+#
+# Wraps the `kicadiff --md` invocation plus the surrounding glue (toolchain
+# install, KiCad install, output staging) so a caller workflow only has to
+# point at the path it cares about.
+#
+# Image embedding strategy: this action produces a self-contained markdown
+# report **with images** in the output directory (suitable for upload as an
+# artifact) and a **text-only** structural diff (suitable for inlining into
+# a PR comment / description, where image references wouldn't resolve). The
+# caller decides which to use where.
+
+name: kicadiff
+description: Render a visual diff for KiCad files between two git refs.
+
+inputs:
+  path:
+    description: |
+      File or directory to render. Passed verbatim as kicadiff's input
+      argument (project root, .kicad_pro, or a single KiCad file).
+      kicadiff's `--` separator only accepts one input, so multi-target
+      runs need separate action invocations. Default: cwd.
+    required: false
+    default: "."
+  from-ref:
+    description: |
+      "before" git ref. Equivalent to kicadiff --from. Default:
+      github.event.pull_request.base.sha when inside a pull_request
+      event, else HEAD~1.
+    required: false
+    default: ""
+  to-ref:
+    description: |
+      "after" git ref. Equivalent to kicadiff --to. Empty string means
+      working tree. Default: github.event.pull_request.head.sha for
+      pull_request, else empty (working tree).
+    required: false
+    default: ""
+  output-dir:
+    description: Directory where images, HTML, and markdown are written.
+    required: false
+    default: kicadiff-output
+  kicad-version:
+    description: |
+      KiCad major version to install from the official PPA on Linux. Empty
+      string skips the install step (useful when the runner already has
+      kicad-cli on PATH or when kicadiff is being driven against
+      pre-rendered output).
+    required: false
+    default: "10"
+  install-kicadiff:
+    description: |
+      How to obtain the kicadiff CLI:
+        - "skip"    : assume `kicadiff` is already on PATH (the kicadiff
+                      repo's own workflows do this after `pnpm install`)
+        - "bunx"    : install on demand via `bunx kicadiff@<version>`
+        - "<ver>"   : forced npm semver passed to `bunx kicadiff@<ver>`
+      Defaults to "skip" since this action lives inside the kicadiff repo
+      and external consumers will explicitly opt into bunx.
+    required: false
+    default: "skip"
+
+outputs:
+  markdown-path:
+    description: Path to the generated markdown report (with image links).
+    value: ${{ steps.run.outputs.markdown-path }}
+  text-path:
+    description: Path to the generated text-only structural diff.
+    value: ${{ steps.run.outputs.text-path }}
+  output-dir:
+    description: Resolved absolute path of the output directory.
+    value: ${{ steps.run.outputs.output-dir }}
+  has-changes:
+    description: |
+      "true" when the structural text diff is non-empty (i.e. something
+      changed between the two refs), "false" otherwise. Useful for
+      skipping comment posting on no-op runs.
+    value: ${{ steps.run.outputs.has-changes }}
+
+runs:
+  using: composite
+  steps:
+    # Bun is needed both as the kicadiff CLI runtime (its shebang is
+    # `#!/usr/bin/env bun`) and to run `bunx` if install-kicadiff != skip.
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2.2.0
+      with:
+        bun-version: latest
+
+    # KiCad provides the rendering engine (kicad-cli). The PPA carries
+    # newer versions than Ubuntu's default; kicadiff requires 9.x+ for the
+    # per-layer PCB render flag. Skip when kicad-version is empty so a
+    # caller can pre-install it differently (e.g. nix, brew, custom image).
+    - name: Install KiCad
+      if: ${{ inputs.kicad-version != '' }}
+      shell: bash
+      run: |
+        set -eux
+        sudo add-apt-repository --yes ppa:kicad/kicad-${{ inputs.kicad-version }}.0-releases
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends kicad
+        kicad-cli --version
+
+    - name: Resolve refs and run kicadiff
+      id: run
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FROM: ${{ inputs.from-ref }}
+        INPUT_TO: ${{ inputs.to-ref }}
+        INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+        INPUT_INSTALL: ${{ inputs.install-kicadiff }}
+        # Defaults for pull_request context. Outside a PR these are empty
+        # and we fall back to HEAD~1 for from-ref.
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -eu
+
+        # ----- Resolve the kicadiff command -----
+        case "$INPUT_INSTALL" in
+          skip) KICADIFF_CMD=(kicadiff) ;;
+          bunx) KICADIFF_CMD=(bunx --bun kicadiff) ;;
+          *)    KICADIFF_CMD=(bunx --bun "kicadiff@$INPUT_INSTALL") ;;
+        esac
+
+        # ----- Resolve refs -----
+        # Priority: explicit input > PR event context > HEAD~1.
+        FROM="${INPUT_FROM:-${PR_BASE_SHA:-HEAD~1}}"
+        TO="${INPUT_TO:-${PR_HEAD_SHA:-}}"
+        echo "kicadiff from-ref: $FROM"
+        echo "kicadiff to-ref:   ${TO:-<working tree>}"
+
+        # Build ref args: --from is always set; --to only when non-empty
+        # so the working-tree default kicks in cleanly.
+        REF_ARGS=(--from "$FROM")
+        if [ -n "$TO" ]; then
+          REF_ARGS+=(--to "$TO")
+        fi
+
+        # ----- Output paths -----
+        # Resolve output-dir to an absolute path so callers don't have to
+        # care about cwd in subsequent steps.
+        mkdir -p "$INPUT_OUTPUT_DIR"
+        OUT_DIR="$(cd "$INPUT_OUTPUT_DIR" && pwd)"
+        MD_PATH="$OUT_DIR/kicadiff-report.md"
+        TXT_PATH="$OUT_DIR/kicadiff-report.txt"
+
+        # ----- Run 1: markdown + images (for the artifact) -----
+        # `--md --output` writes the markdown next to the images so its
+        # relative refs resolve when the artifact is downloaded as a dir.
+        echo "::group::kicadiff --md"
+        "${KICADIFF_CMD[@]}" "${REF_ARGS[@]}" --md \
+          --output "$MD_PATH" \
+          --output-dir "$OUT_DIR" \
+          -- "$INPUT_PATH"
+        echo "::endgroup::"
+
+        # ----- Run 2: text-only structural diff (for the comment body) -----
+        # Cache makes this near-free since the renders are content-addressed
+        # and run 1 already populated the cache.
+        echo "::group::kicadiff --text-only"
+        "${KICADIFF_CMD[@]}" "${REF_ARGS[@]}" --text-only \
+          -- "$INPUT_PATH" \
+          | tee "$TXT_PATH"
+        echo "::endgroup::"
+
+        # ----- Detect "any changes" -----
+        # A non-empty structural body has a marker line we can grep for.
+        # Be liberal: the comment poster also gets the raw text and can
+        # decide whether to skip its own posting.
+        if [ -s "$TXT_PATH" ] && grep -qE "^(Added|Removed|Changed|\+|-)" "$TXT_PATH"; then
+          HAS_CHANGES=true
+        else
+          HAS_CHANGES=false
+        fi
+
+        # ----- Outputs -----
+        {
+          echo "markdown-path=$MD_PATH"
+          echo "text-path=$TXT_PATH"
+          echo "output-dir=$OUT_DIR"
+          echo "has-changes=$HAS_CHANGES"
+        } >> "$GITHUB_OUTPUT"
