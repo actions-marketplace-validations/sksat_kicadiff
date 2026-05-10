@@ -61,8 +61,6 @@ jobs:
       # binary on PATH. Doing this here (not inside the action) keeps the
       # action friendly to external consumers who pull it via `bunx`.
       - uses: pnpm/action-setup@v6.0.6
-        with:
-          version: 10
       - uses: actions/setup-node@v6.4.0
         with:
           node-version: 24

@@ -20,9 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
+      # pnpm version comes from the `packageManager` field in package.json.
+      # Setting `with: version: ...` here would conflict and v6 refuses
+      # to pick one.
       - uses: pnpm/action-setup@v6.0.6
-        with:
-          version: 10
       - uses: actions/setup-node@v6.4.0
         with:
           node-version: 24
@@ -53,8 +54,6 @@ jobs:
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v6.0.6
-        with:
-          version: 10
       - uses: actions/setup-node@v6.4.0
         with:
           node-version: 24
