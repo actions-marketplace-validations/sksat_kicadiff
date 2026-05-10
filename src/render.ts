@@ -14,14 +14,29 @@ import { fileURLToPath } from "node:url";
 import which from "which";
 import VIEWER_HTML from "./viewer-content.ts";
 import type { FileType, Manifest, ProjectManifest, SideManifest } from "./types.ts";
+import pixelmatch from "pixelmatch";
+import { PNG } from "pngjs";
+import { Resvg } from "@resvg/resvg-js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** SVG → PNG conversion. Replaces the previous shellout to `rsvg-convert`,
+ *  so the runtime no longer needs librsvg installed. resvg is a Rust SVG
+ *  rasteriser exposed via `@resvg/resvg-js`; we instantiate one Resvg per
+ *  call (cheap) and let it pick the right native binding for the host. */
+function rasterise(svgPath: string, pngPath: string, widthPx: number): void {
+  const svg = fs.readFileSync(svgPath);
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: "width", value: widthPx },
+  });
+  fs.writeFileSync(pngPath, resvg.render().asPng());
+}
 
 const PCB_LAYERS = "F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,Edge.Cuts";
 // python3 used to be required by an earlier bash-era hook; the TS render
 // path doesn't shell out to it, so requiring it would needlessly fail on
-// machines that have kicad-cli + rsvg-convert but no Python.
-const REQUIRED_TOOLS = ["kicad-cli", "rsvg-convert"] as const;
+// machines that have kicad-cli but no Python.
+const REQUIRED_TOOLS = ["kicad-cli"] as const;
 
 export interface RenderOptions {
   /** Path to .kicad_pcb or .kicad_sch file (absolute or relative) */
@@ -140,7 +155,7 @@ function gitReadAtRef(repoRoot: string, ref: string, relPath: string): Buffer | 
 // =============================================================================
 // Render output cache
 //
-// Rendering kicad-cli + rsvg-convert is the slow part of this tool (seconds
+// Rendering kicad-cli + resvg is the slow part of this tool (seconds
 // per file), but the result is fully determined by the file's content + the
 // kicad-cli version. We hash both into a content-addressed cache so repeated
 // runs against the same git ref / unchanged working tree are near-instant.
@@ -237,8 +252,11 @@ function cacheKeyFor(
   //     source as the file content (working tree vs. git ref) so the key
   //     matches what kicad-cli will actually see.
   //   - source content
-  // Bumped to v3 when sibling sourcing was tied to ref/working-tree.
-  h.update("kicadiff-cache-v3\0");
+  // Bumped to v4 when SVG → PNG switched from rsvg-convert to
+  // @resvg/resvg-js: rasteriser output bytes differ slightly even for
+  // visually-identical inputs, so old v3 PNG cache entries would
+  // confuse the byte-level hasDiff check.
+  h.update("kicadiff-cache-v4\0");
   h.update(getKicadCliVersion());
   h.update("\0");
   h.update(fileType);
@@ -370,15 +388,14 @@ async function renderPcbLayers(input: string, outputDir: string): Promise<void> 
     "-o", `${outputDir}/`,
     input,
   ]);
-  // Convert each generated SVG to PNG in parallel (preserves alpha)
-  const conversions = fs.readdirSync(outputDir)
-    .filter(f => f.endsWith(".svg"))
-    .map(f => {
-      const svg = path.join(outputDir, f);
-      const png = svg.replace(/\.svg$/, ".png");
-      return run("rsvg-convert", ["-w", "1600", svg, "-o", png]);
-    });
-  await Promise.all(conversions);
+  // Convert each generated SVG to PNG (preserves alpha). resvg-js is
+  // synchronous so there's no async to await, but we still touch every SVG
+  // sequentially — kicad-cli is the heavy step, not this.
+  for (const f of fs.readdirSync(outputDir)) {
+    if (!f.endsWith(".svg")) continue;
+    const svg = path.join(outputDir, f);
+    rasterise(svg, svg.replace(/\.svg$/, ".png"), 1600);
+  }
 }
 
 /** Render a schematic. For multi-sheet (hierarchical) schematics, kicad-cli
@@ -457,12 +474,10 @@ async function renderSch(
     if (p.rawSvg !== p.svg) fs.renameSync(p.rawSvg, p.svg);
   }
 
-  // Convert SVGs to PNG in parallel. PNGs are still needed for the diff
-  // overlay (ImageMagick compare) and for hasDiff byte-level comparison;
-  // the manifest references the SVGs.
-  await Promise.all(pages.map(p =>
-    run("rsvg-convert", ["-w", "1600", p.svg, "-o", p.png]),
-  ));
+  // Convert SVGs to PNG. PNGs are still needed for hasDiff byte-level
+  // comparison and for the pixelmatch diff overlay; the manifest references
+  // the SVGs (so the viewer can zoom indefinitely without rasterisation).
+  for (const p of pages) rasterise(p.svg, p.png, 1600);
 
   // Copy root page artefacts to the side-level "combined" locations.
   const root = pages.find(p => p.name === rootName);
@@ -475,9 +490,7 @@ async function renderSch(
 }
 
 async function svgToPng(svg: string, png: string): Promise<void> {
-  if (fs.existsSync(svg)) {
-    await run("rsvg-convert", ["-w", "1600", svg, "-o", png]);
-  }
+  if (fs.existsSync(svg)) rasterise(svg, png, 1600);
 }
 
 /** Render a symbol library file (.kicad_sym). Each contained symbol becomes
@@ -516,9 +529,7 @@ async function renderSymLib(
   // SVG (manifest target) and the PNG (diff/hasDiff target).
   for (const p of pages) fs.renameSync(p.rawSvg, p.svg);
 
-  await Promise.all(pages.map(p =>
-    run("rsvg-convert", ["-w", "800", p.svg, "-o", p.png]),
-  ));
+  for (const p of pages) rasterise(p.svg, p.png, 800);
   // For root/combined: use the first symbol if any.
   if (pages.length > 0) {
     fs.copyFileSync(pages[0].png, rootPng);
@@ -562,7 +573,7 @@ async function renderFootprint(
   // kicad-cli emits `<stableName>.svg` since that's the lib filename
   const stableSvg = path.join(pagesDir, `${stableName}.svg`);
   const stablePng = path.join(pagesDir, `${stableName}.png`);
-  await run("rsvg-convert", ["-w", "1200", stableSvg, "-o", stablePng]);
+  rasterise(stableSvg, stablePng, 1200);
   // Side-level "combined" gets both the PNG (diff overlay / hasDiff input)
   // and the SVG (manifest target).
   fs.copyFileSync(stablePng, rootPng);
@@ -991,22 +1002,39 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     throw new Error(`failed to render either side (file may not exist at any of the refs)`);
   }
 
-  // --- Diff highlight (optional, requires ImageMagick) ---
+  // --- Diff highlight (pure JS, no ImageMagick) ---
   // Only meaningful when both sides exist; with a new or deleted file the
-  // overlay has nothing to compare against.
+  // overlay has nothing to compare against. pixelmatch with diffMask:true
+  // produces a transparent PNG with only the changed pixels filled in,
+  // matching the previous `magick compare -compose src` behaviour.
   let diffPng: string | undefined;
-  if (hasAfter && hasBefore && hasCommand("magick")) {
-    const diffDir = path.join(outputDir, "diff");
-    fs.mkdirSync(diffDir, { recursive: true });
-    diffPng = path.join(diffDir, `${safe}.png`);
-    await tryRun("magick", [
-      "compare", "-fuzz", "5%",
-      "-highlight-color", "#ff000088",
-      "-lowlight-color", "transparent",
-      "-compose", "src",
-      beforePng, afterPng, diffPng,
-    ]);
-    if (!fs.existsSync(diffPng)) diffPng = undefined;
+  if (hasAfter && hasBefore && fs.existsSync(beforePng) && fs.existsSync(afterPng)) {
+    try {
+      const before = PNG.sync.read(fs.readFileSync(beforePng));
+      const after = PNG.sync.read(fs.readFileSync(afterPng));
+      // pixelmatch requires identical dimensions. If they differ (very rare
+      // — would mean the kicad-cli render decided to use a different page
+      // size between revisions), skip the overlay rather than crash.
+      if (before.width === after.width && before.height === after.height) {
+        const out = new PNG({ width: before.width, height: before.height });
+        pixelmatch(before.data, after.data, out.data, before.width, before.height, {
+          // 0.05 mirrors the previous `magick compare -fuzz 5%` tolerance.
+          threshold: 0.05,
+          // diffColor matches the old `-highlight-color "#ff000088"` (red @
+          // 50% alpha-ish; pixelmatch always writes RGB, but diffMask:true
+          // leaves the alpha channel transparent for unchanged pixels).
+          diffColor: [255, 0, 0],
+          diffMask: true,
+        });
+        const diffDir = path.join(outputDir, "diff");
+        fs.mkdirSync(diffDir, { recursive: true });
+        diffPng = path.join(diffDir, `${safe}.png`);
+        fs.writeFileSync(diffPng, PNG.sync.write(out));
+      }
+    } catch {
+      // Reading or writing the PNG failed — non-fatal, just skip the overlay.
+      diffPng = undefined;
+    }
   }
 
   // For schematics, pass the project basename so buildManifest can identify

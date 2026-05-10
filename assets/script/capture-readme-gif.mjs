@@ -158,6 +158,59 @@ await page.mouse.move(40, 750, { steps: 5 });
 lastX = 40; lastY = 750;
 await wait(250);
 
+/** Drag the swipe divider edge-to-edge with mid-drag snapshots. Headless
+ *  Chromium drops some mousemove events when the drag is dispatched via
+ *  Playwright's mouse API, so we synthesise the events directly on
+ *  document — this matches the viewer's swp.addEventListener('mousedown')
+ *  handler and lets the divider track the cursor reliably. */
+async function dragSwipe(label) {
+  const swpBox = await page.locator("#view-swp").boundingBox();
+  if (!swpBox) return;
+
+  // Sweep nearly edge-to-edge so the wipe covers the full board / sheet.
+  // Grab at the swp-controls bar (near the top of the view) where the
+  // divider handle visibly lives — grabbing mid-image reads weird since
+  // there's no visible handle there.
+  const ctrlBox = await page.locator("#view-swp .swp-controls").boundingBox();
+  const grabY = ctrlBox ? ctrlBox.y + ctrlBox.height / 2 : swpBox.y + 12;
+  const startX = swpBox.x + swpBox.width * 0.95;
+  const endX = swpBox.x + swpBox.width * 0.05;
+  const midY = grabY;
+
+  // Travel cursor to start; pause so it reads as "lining up the grab",
+  // then press "down" to grab the divider.
+  await moveTo(startX, midY, `${label}-startfly`);
+  await wait(450);
+  await page.evaluate(({ x, y }) => {
+    const swp = document.querySelector("#view-swp");
+    swp.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
+  }, { x: startX, y: midY });
+  await wait(120);
+  await shot(`${label}-grab`);
+
+  // Sweep the divider edge-to-edge by emitting mousemove events directly on
+  // document. Snapshot evenly spaced through the sweep for a smooth wipe.
+  const dragFrames = 14;
+  for (let i = 1; i <= dragFrames; i++) {
+    const t = i / dragFrames;
+    const cx = startX + (endX - startX) * t;
+    // Update the fake cursor position too so the GIF shows it travelling.
+    await page.evaluate(({ x, y }) => {
+      document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y }));
+    }, { x: cx, y: midY });
+    await wait(40);
+    if (i % 3 === 0 || i === dragFrames) await shot(`${label}-drag${i}`);
+  }
+
+  await page.evaluate(({ x, y }) => {
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: x, clientY: y, button: 0 }));
+  }, { x: endX, y: midY });
+  // Sync Playwright's mouse state to where the fake cursor ended up.
+  await page.mouse.move(endX, midY);
+  lastX = endX; lastY = midY;
+  await wait(200);
+}
+
 // ---- PCB walk-through ----
 if (pcbTab) {
   const pcbBox = await pcbTab.boundingBox();
@@ -170,59 +223,7 @@ if (pcbTab) {
 
   await clickShot('#view-tabs button[data-view="sbs"]', "pcb-sbs");
   await clickShot('#view-tabs button[data-view="swp"]', "pcb-swipe");
-
-  // Big swipe drag with multiple in-flight snapshots so the divider sweeps
-  // visibly across the board.
-  const swpView = page.locator("#view-swp");
-  const swpBox = await swpView.boundingBox();
-  if (swpBox) {
-    // Sweep nearly edge-to-edge so the wipe covers the full board.
-    // Grab at the swp-controls bar (near the top of the view) where the
-    // divider handle visibly lives — grabbing mid-board reads weird since
-    // there's no visible handle there.
-    const ctrlBox = await page.locator("#view-swp .swp-controls").boundingBox();
-    const grabY = ctrlBox ? ctrlBox.y + ctrlBox.height / 2 : swpBox.y + 12;
-    const startX = swpBox.x + swpBox.width * 0.95;
-    const endX = swpBox.x + swpBox.width * 0.05;
-    const midY = grabY;
-
-    // Travel cursor to start; pause so it reads as "lining up the grab",
-    // then press "down" to grab the divider.
-    await moveTo(startX, midY, "pcb-swipe-startfly");
-    await wait(450);
-    // Dispatch mousedown via the DOM so the viewer's swipe handler reliably
-    // sets dragging=true. Playwright's mouse.down also works but its
-    // subsequent mouse.move events sometimes miss the document handler when
-    // a drag is in progress in headless Chromium.
-    await page.evaluate(({ x, y }) => {
-      const swp = document.querySelector("#view-swp");
-      swp.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
-    }, { x: startX, y: midY });
-    await wait(120);
-    await shot("pcb-swipe-grab");
-
-    // Sweep the divider edge-to-edge by emitting mousemove events directly on
-    // document. Snapshot evenly spaced through the sweep for a smooth wipe.
-    const dragFrames = 14;
-    for (let i = 1; i <= dragFrames; i++) {
-      const t = i / dragFrames;
-      const cx = startX + (endX - startX) * t;
-      // Update the fake cursor position too so the GIF shows it travelling.
-      await page.evaluate(({ x, y }) => {
-        document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y }));
-      }, { x: cx, y: midY });
-      await wait(40);
-      if (i % 3 === 0 || i === dragFrames) await shot(`pcb-swipe-drag${i}`);
-    }
-
-    await page.evaluate(({ x, y }) => {
-      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: x, clientY: y, button: 0 }));
-    }, { x: endX, y: midY });
-    // Sync Playwright's mouse state to where the fake cursor ended up.
-    await page.mouse.move(endX, midY);
-    lastX = endX; lastY = midY;
-    await wait(200);
-  }
+  await dragSwipe("pcb-swipe");
 }
 
 // ---- Schematic walk-through ----
@@ -237,6 +238,7 @@ if (schTab) {
 
   await clickShot('#view-tabs button[data-view="sbs"]', "sch-sbs");
   await clickShot('#view-tabs button[data-view="swp"]', "sch-swipe");
+  await dragSwipe("sch-swipe");
 }
 
 await browser.close();

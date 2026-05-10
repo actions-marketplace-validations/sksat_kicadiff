@@ -17,36 +17,28 @@ vs 作業ツリーなど) の差分を、人間が視覚的に確認できる形
   レンダリングを実行する (これがあるので利用側は wrapper script を
   書く必要がない)。
 
-## ランタイム依存の縮約
+## ランタイム依存
 
-最終的にエンドユーザーが `kicad-cli` だけ持っていれば動く状態を
-目指している。理由は次のとおり:
+エンドユーザーが `kicad-cli` だけ持っていれば動く状態を維持する。
+ファイルを実際に解釈・描画するのは kicad-cli の責務であり、これは
+外部に出せない (KiCad 本体の機能依存)。
 
-- KiCad ファイルを実際に解釈・描画するのは kicad-cli の責務であり、
-  これは外部に出せない (KiCad 本体の機能に依存)。
-- 一方 `rsvg-convert` / ImageMagick は SVG ラスタライズと画像比較
-  という汎用処理であり、ライブラリで置換可能。
-- standalone バイナリを `bun build --compile` で配布する想定なので、
-  ランタイムには Bun も Node も入れなくて済む。kicad-cli さえあれば
-  OK、という体験にしたい。
+| 依存             | 状態                                              |
+|------------------|---------------------------------------------------|
+| kicad-cli        | 維持                                              |
+| Bun              | `bun build --compile` でバイナリに内包            |
+| ~~`rsvg-convert`~~ | `@resvg/resvg-js` (Rust 製、Node binding) で置換  |
+| ~~`magick compare`~~ | `pixelmatch` + `pngjs` の純 JS 比較で置換       |
 
-現状の依存と置換計画:
-
-| 依存             | 置換                                       | 状態   |
-|------------------|---------------------------------------------|--------|
-| kicad-cli        | (置換しない)                               | 維持   |
-| Bun              | `bun build --compile` で binary に内包      | OK     |
-| `rsvg-convert`   | `@resvg/resvg-wasm` 等の in-process WASM   | TODO   |
-| `magick compare` | `pixelmatch` + `pngjs` の純 JS 比較        | TODO   |
-
-WASM ラスタライザに置換すると Bun の `--compile` でバイナリ内に
-完全に取り込めるので、配布 binary 1 つだけで動く構成になる。
+`bun build --compile` で作る standalone binary は kicad-cli さえ手元に
+あれば動く 1 ファイル配布。`bunx` / `npm install -g` 系も Bun 1 つ
++ kicad-cli で完結する (ランタイムから外部コマンドを呼ばない)。
 
 ## アーキテクチャ概観
 
 ```
                    ┌─ kicad-cli pcb export svg ─┐
-入力ファイル ───┤   ├──── rsvg-convert ──→ PNG ──┐
+入力ファイル ───┤   ├── @resvg/resvg-js ──→ PNG ─┐
 (.kicad_pcb 等)    │   │                            ├──→ Manifest (JSON)
    ↓               │                                │       │
 git ref に対応する │           render cache         │       │
@@ -59,9 +51,9 @@ content を取り出し │ (~/.cache/kicadiff/<hash>/)    │       ↓
                                                        Text report
 ```
 
-レンダリングは外部ツール (kicad-cli, rsvg-convert, optionally
-ImageMagick) に丸投げし、kicadiff は orchestration とキャッシュと
-出力フォーマットの統合を担当する。
+SVG 生成は外部ツール (kicad-cli) に丸投げ、SVG → PNG ラスタ化と
+ピクセル差分は in-process JS (`@resvg/resvg-js` / `pixelmatch`)。
+kicadiff は orchestration とキャッシュと出力フォーマットの統合を担当する。
 
 ## 出力フォーマット
 
@@ -239,12 +231,10 @@ PNG は次の用途で `${side}/${safe}.png` / `${pagesDir}/<name>.png` /
 
 - `hasDiff` の byte 比較
 - `--md` レポート用の side-by-side 画像
-- 差分ハイライト overlay (`magick compare` の出力 — `M.diff` のみ
-  最初から PNG)
+- 差分ハイライト overlay (pixelmatch の出力 — `M.diff`)
 
-将来 `rsvg-convert` を WASM ラスタライザに置換する話 (上記「ランタイム
-依存の縮約」) は PNG 生成側の実装詳細で、manifest schema には影響
-しない。
+ラスタ化は `@resvg/resvg-js` を介して in-process で行うので、ランタイム
+には外部ツール (旧 `rsvg-convert`) を必要としない。
 
 ## 4 つのファイル型
 
@@ -291,9 +281,10 @@ manifest 上は file が `after.pages[]` を持つかどうかで page 切替の
 2. キャッシュ確認 (詳細は次節)
 3. ヒットしなければ:
    - kicad-cli で SVG 生成
-   - rsvg-convert で PNG 生成
+   - `@resvg/resvg-js` で SVG → PNG (in-process)
 4. キャッシュへ保存
-5. (オプション) ImageMagick `magick compare` で差分ハイライト PNG
+5. before/after の両方がそろったら `pixelmatch` で差分ハイライト PNG
+   を生成 (in-process、いずれの side が欠けていればスキップ)
 
 before と after が完了したら manifest に組み立て、HTML / markdown に
 inline する。

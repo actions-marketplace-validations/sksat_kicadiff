@@ -37,9 +37,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
 
-  # Full test suite. Needs kicad-cli (KiCad 10 rendering engine), rsvg-convert
-  # (SVG → PNG), ImageMagick (diff highlight), Bun (the kicadiff CLI shebang),
-  # and the Playwright Chromium browser (viewer DOM tests).
+  # Full test suite. Needs kicad-cli (KiCad 10 rendering engine), Bun (the
+  # kicadiff CLI shebang), and the Playwright Chromium browser (viewer DOM
+  # tests). SVG rasterisation is in-process via @resvg/resvg-js, and the
+  # diff overlay via pixelmatch — no librsvg / ImageMagick required.
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -66,17 +67,12 @@ jobs:
       # kicadiff's render pipeline relies on `kicad-cli pcb render --layer`
       # (added in 9.x), so we have to pull from the PPA. We track the same
       # KiCad major as the development environment (10.x).
-      - name: Install KiCad + image tooling
+      - name: Install KiCad
         run: |
           sudo add-apt-repository --yes ppa:kicad/kicad-10.0-releases
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            kicad \
-            librsvg2-bin \
-            imagemagick
+          sudo apt-get install --yes --no-install-recommends kicad
           kicad-cli --version
-          rsvg-convert --version
-          magick --version | head -1
 
       # Tests build temporary git repos in $TMPDIR; CI workers don't have a
       # global identity by default and `git commit` errors out without one.
