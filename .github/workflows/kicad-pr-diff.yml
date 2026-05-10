@@ -94,6 +94,7 @@ jobs:
       # rather than a 404. Artifact size is dominated by PNGs and is
       # typically tens of KB to a few MB for a small board.
       - name: Upload artifact
+        id: artifact
         uses: actions/upload-artifact@v5.0.0
         with:
           name: kicadiff-pr-${{ github.event.pull_request.number }}
@@ -103,6 +104,55 @@ jobs:
           # past PR merge so historical context is available short-term.
           retention-days: 14
           if-no-files-found: warn
+
+      # Job summary: render the kicadiff markdown report inline on the
+      # workflow run page so reviewers can read the diff without
+      # downloading anything. Image refs in the markdown are relative to
+      # the artifact directory and don't resolve from the summary's
+      # context, so we strip them and link to the artifact for the rich
+      # version. Step summary is capped at 1 MiB; the structural diff
+      # alone fits comfortably even for large boards.
+      - name: Write job summary
+        env:
+          MD_PATH: ${{ steps.kicadiff.outputs.markdown-path }}
+          TXT_PATH: ${{ steps.kicadiff.outputs.text-path }}
+          HAS_CHANGES: ${{ steps.kicadiff.outputs.has-changes }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          set -eu
+          {
+            echo '## 🔍 KiCad visual diff'
+            echo
+            if [ "$HAS_CHANGES" = "true" ]; then
+              echo "Structural change detected."
+            else
+              echo "No structural change detected — the rendered output is byte-identical between base and head."
+            fi
+            echo
+            if [ -n "${ARTIFACT_URL:-}" ]; then
+              echo "**Full report with images:** [download artifact]($ARTIFACT_URL)"
+            else
+              echo "**Full report with images:** see the *Artifacts* section below."
+            fi
+            echo
+            # Inline the kicadiff markdown report, but with image lines
+            # stripped: the markdown's relative `![](after/...)` refs
+            # would render as broken images on the run page since job
+            # summaries don't get the artifact filesystem mounted. The
+            # structural section still has all the info that matters.
+            if [ -s "$MD_PATH" ]; then
+              # Drop standalone image lines and the surrounding table
+              # syntax that wraps them; keep headings, prose, and the
+              # structural diff verbatim. Also cap at 900 KiB to leave
+              # headroom under the 1 MiB summary limit.
+              sed -E '/!\[[^]]*\]\([^)]+\)/d' "$MD_PATH" \
+                | head -c 921600
+            elif [ -s "$TXT_PATH" ]; then
+              echo '```diff'
+              head -c 921600 "$TXT_PATH"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Build a body that we can paste into both the PR comment and the PR
       # description. Markers around the body let us idempotently replace
