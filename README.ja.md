@@ -145,6 +145,47 @@ HTML ビューアはマニフェストと画像参照を全部 inline にした 
 ~1 秒で返る。`--no-cache` で無効化、`KICADIFF_CACHE_DIR` で位置を
 上書きできる。
 
+## GitHub Actions
+
+KiCad ファイルが変わる PR で visual diff を自動生成する composite
+action を提供しています。KiCad のインストールから kicadiff 実行、
+そしてオプトインで artifact upload / job summary (画像インライン
+埋め込み) / sticky な PR comment / PR description のセクション更新
+までこなします。
+
+```yaml
+# .github/workflows/kicad-diff.yml
+name: KiCad visual diff
+on:
+  pull_request:
+    paths: ["**/*.kicad_pcb", "**/*.kicad_sch"]
+permissions:
+  contents: read
+  pull-requests: write   # pr-comment / pr-description を使う場合のみ
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - uses: sksat/kicadiff@v0.1.0
+        with:
+          path: hardware/main-board   # 既定は cwd
+          upload-artifact: 'true'
+          pr-comment:      'true'
+          pr-description:  'true'
+```
+
+job summary には combined の before/after PNG を base64 data URI で
+インライン埋め込みするので外部ホスティング不要。1 MiB を超えそうな
+ときは超過分の画像だけドロップして `::warning::` を出し、artifact
+へのリンクで補完。PR comment / description はテキスト中心 (画像は
+artifact 経由) にしてあります。
+
+`install-kicadiff: bunx` (既定) で公開済の最新を on-demand に取得、
+`install-kicadiff: <semver>` でバージョンを固定。既に PATH に
+kicadiff がある (例: 自前 image) 場合は `install-kicadiff: skip`。
+
 ## さらに詳しく
 
 - `DESIGN.md` — アーキテクチャ、レンダリングパイプライン、キャッシュ

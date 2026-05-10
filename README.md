@@ -142,6 +142,47 @@ Every per-side render is content-addressed and cached under
 against unchanged content return in ~1 s vs ~5 s cold. Bypass with
 `--no-cache` or override the location with `KICADIFF_CACHE_DIR`.
 
+## GitHub Actions
+
+Drop the action into a workflow to render a visual diff for every PR
+that touches a KiCad file. The action handles KiCad install, runs
+kicadiff, and (opt-in) uploads the rendered images as a build artifact,
+writes a job summary with inline before/after images, upserts a sticky
+PR comment, and updates a marked section in the PR description.
+
+```yaml
+# .github/workflows/kicad-diff.yml
+name: KiCad visual diff
+on:
+  pull_request:
+    paths: ["**/*.kicad_pcb", "**/*.kicad_sch"]
+permissions:
+  contents: read
+  pull-requests: write   # only needed for pr-comment / pr-description
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - uses: sksat/kicadiff@v0.1.0
+        with:
+          path: hardware/main-board   # default: cwd
+          upload-artifact: 'true'
+          pr-comment:      'true'
+          pr-description:  'true'
+```
+
+Job summary embeds combined PNGs as base64 data URIs (no extra hosting
+needed) up to a 1 MiB cap; if a project's images would overflow, the
+action drops the rest, emits `::warning::`, and links to the artifact
+for the full set. PR comment / description are kept text-only and link
+to the artifact for images.
+
+`install-kicadiff: bunx` (default) pulls the latest published kicadiff
+on demand; pin a version with `install-kicadiff: <semver>`. Pre-installed
+on PATH? Use `install-kicadiff: skip`.
+
 ## More
 
 - `DESIGN.md` — architecture, render pipeline, cache key shape,

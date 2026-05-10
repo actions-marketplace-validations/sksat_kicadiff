@@ -62,14 +62,18 @@ inputs:
   install-kicadiff:
     description: |
       How to obtain the kicadiff CLI:
-        - "skip"    : assume `kicadiff` is already on PATH (the kicadiff
-                      repo's own workflows do this after `pnpm install`)
-        - "bunx"    : install on demand via `bunx kicadiff@<version>`
-        - "<ver>"   : forced npm semver passed to `bunx kicadiff@<ver>`
-      Defaults to "skip" since this action lives inside the kicadiff repo
-      and external consumers will explicitly opt into bunx.
+        - "bunx"    : pull the latest published kicadiff on demand via
+                      `bunx --bun kicadiff` (default — works for any
+                      external consumer with no extra setup)
+        - "<ver>"   : forced npm semver, e.g. "0.1.0", invoked as
+                      `bunx --bun kicadiff@<ver>` (pin if you don't
+                      want surprise upgrades)
+        - "skip"    : assume `kicadiff` is already on PATH. Used by the
+                      kicadiff repo's own dogfood workflow which
+                      `pnpm install`s the source before invoking the
+                      action.
     required: false
-    default: "skip"
+    default: "bunx"
 
   # ----- Optional publishing toggles -----
   job-summary:
