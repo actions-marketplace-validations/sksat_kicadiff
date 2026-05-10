@@ -28,9 +28,10 @@ KiCad プロジェクト用の visual diff ツール。`.kicad_pcb` /
   standalone binary をコンパイルするのも Bun なので、Node を別途用意
   する必要はない。standalone binary 派は不要。
 
-レンダリングパイプライン (SVG → PNG、ピクセル差分ハイライト) はかつて
-`rsvg-convert` / ImageMagick を必要としたが、今は in-process JS
-(`@resvg/resvg-js`、`pixelmatch`) に置き換え済み。
+レンダリングパイプライン (SVG → PNG、3 色のピクセル差分ハイライト)
+はかつて `rsvg-convert` / ImageMagick を必要としたが、今は in-process
+(`@resvg/resvg-js` でラスタ化、`pngjs` 上の小さな分類器で diff overlay)
+に置き換え済み。
 
 ## インストール
 

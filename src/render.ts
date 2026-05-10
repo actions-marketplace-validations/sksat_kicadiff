@@ -14,8 +14,7 @@ import { fileURLToPath } from "node:url";
 import which from "which";
 import VIEWER_HTML from "./viewer-content.ts";
 import type { FileType, Manifest, ProjectManifest, SideManifest } from "./types.ts";
-import pixelmatch from "pixelmatch";
-import { PNG } from "pngjs";
+import { triColorDiff } from "./diff-overlay.ts";
 import { Resvg } from "@resvg/resvg-js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -475,7 +474,7 @@ async function renderSch(
   }
 
   // Convert SVGs to PNG. PNGs are still needed for hasDiff byte-level
-  // comparison and for the pixelmatch diff overlay; the manifest references
+  // comparison and for the tri-colour diff overlay; the manifest references
   // the SVGs (so the viewer can zoom indefinitely without rasterisation).
   for (const p of pages) rasterise(p.svg, p.png, 1600);
 
@@ -1002,37 +1001,21 @@ export async function render(opts: RenderOptions): Promise<RenderResult> {
     throw new Error(`failed to render either side (file may not exist at any of the refs)`);
   }
 
-  // --- Diff highlight (pure JS, no ImageMagick) ---
-  // Only meaningful when both sides exist; with a new or deleted file the
-  // overlay has nothing to compare against. pixelmatch with diffMask:true
-  // produces a transparent PNG with only the changed pixels filled in,
-  // matching the previous `magick compare -compose src` behaviour.
+  // --- Tri-colour diff overlay (pure JS) ---
+  // Each pixel is classified as ADD (green), DELETE (red), CHANGE (amber),
+  // or no-change (transparent). See src/diff-overlay.ts for the classifier;
+  // it handles both transparent-background renders (sch / per-layer PCB)
+  // and solid-background renders (PCB combined SVG → PNG).
   let diffPng: string | undefined;
   if (hasAfter && hasBefore && fs.existsSync(beforePng) && fs.existsSync(afterPng)) {
     try {
-      const before = PNG.sync.read(fs.readFileSync(beforePng));
-      const after = PNG.sync.read(fs.readFileSync(afterPng));
-      // pixelmatch requires identical dimensions. If they differ (very rare
-      // — would mean the kicad-cli render decided to use a different page
-      // size between revisions), skip the overlay rather than crash.
-      if (before.width === after.width && before.height === after.height) {
-        const out = new PNG({ width: before.width, height: before.height });
-        pixelmatch(before.data, after.data, out.data, before.width, before.height, {
-          // 0.05 mirrors the previous `magick compare -fuzz 5%` tolerance.
-          threshold: 0.05,
-          // diffColor matches the old `-highlight-color "#ff000088"` (red @
-          // 50% alpha-ish; pixelmatch always writes RGB, but diffMask:true
-          // leaves the alpha channel transparent for unchanged pixels).
-          diffColor: [255, 0, 0],
-          diffMask: true,
-        });
-        const diffDir = path.join(outputDir, "diff");
-        fs.mkdirSync(diffDir, { recursive: true });
-        diffPng = path.join(diffDir, `${safe}.png`);
-        fs.writeFileSync(diffPng, PNG.sync.write(out));
-      }
+      const out = triColorDiff(fs.readFileSync(beforePng), fs.readFileSync(afterPng));
+      const diffDir = path.join(outputDir, "diff");
+      fs.mkdirSync(diffDir, { recursive: true });
+      diffPng = path.join(diffDir, `${safe}.png`);
+      fs.writeFileSync(diffPng, out);
     } catch {
-      // Reading or writing the PNG failed — non-fatal, just skip the overlay.
+      // Dimension mismatch / corrupt PNG — non-fatal, just skip the overlay.
       diffPng = undefined;
     }
   }

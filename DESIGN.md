@@ -28,7 +28,7 @@ vs 作業ツリーなど) の差分を、人間が視覚的に確認できる形
 | kicad-cli        | 維持                                              |
 | Bun              | `bun build --compile` でバイナリに内包            |
 | ~~`rsvg-convert`~~ | `@resvg/resvg-js` (Rust 製、Node binding) で置換  |
-| ~~`magick compare`~~ | `pixelmatch` + `pngjs` の純 JS 比較で置換       |
+| ~~`magick compare`~~ | 自前の tri-color 分類器 (`pngjs` 上) で置換     |
 
 `bun build --compile` で作る standalone binary は kicad-cli さえ手元に
 あれば動く 1 ファイル配布。`bunx` / `npm install -g` 系も Bun 1 つ
@@ -52,7 +52,7 @@ content を取り出し │ (~/.cache/kicadiff/<hash>/)    │       ↓
 ```
 
 SVG 生成は外部ツール (kicad-cli) に丸投げ、SVG → PNG ラスタ化と
-ピクセル差分は in-process JS (`@resvg/resvg-js` / `pixelmatch`)。
+ピクセル差分は in-process JS (`@resvg/resvg-js` / 自前の tri-color 分類器)。
 kicadiff は orchestration とキャッシュと出力フォーマットの統合を担当する。
 
 ## 出力フォーマット
@@ -177,8 +177,16 @@ compare-wrap の width が `calc(var(--zoom,1) * 100%)` で連動する。
 
 - file タブ: `FileManifest.hasDiff === true` のとき琥珀色
 - page タブ: `SchPage.hasDiff === true` のとき琥珀色
-- diff overlay (赤いハイライト): pulse animation で目に留まる、デフォルト
-  ON (チェックボックスでオフ可)
+- diff overlay: pulse animation で目に留まる、デフォルト ON
+  (チェックボックスでオフ可)。3 色で意味分けする:
+  - **緑** (add): before に無く after にあるピクセル
+  - **赤** (delete): before にあり after に無いピクセル
+  - **琥珀** (change/move): 両側に内容があるが色が違うピクセル
+
+  分類は `src/diff-overlay.ts` の `triColorDiff()` で純 JS 実装。
+  PCB の combined PNG (KiCad の board background あり) は corner pixel を
+  サンプルして「背景色」を判定し、それに近いピクセルを empty 扱いに
+  する。schematic / 個別レイヤーは透過背景なので alpha だけで判定。
 
 ## マニフェスト
 
@@ -231,7 +239,7 @@ PNG は次の用途で `${side}/${safe}.png` / `${pagesDir}/<name>.png` /
 
 - `hasDiff` の byte 比較
 - `--md` レポート用の side-by-side 画像
-- 差分ハイライト overlay (pixelmatch の出力 — `M.diff`)
+- 差分ハイライト overlay (`triColorDiff` の出力 — `M.diff`)
 
 ラスタ化は `@resvg/resvg-js` を介して in-process で行うので、ランタイム
 には外部ツール (旧 `rsvg-convert`) を必要としない。
@@ -283,8 +291,8 @@ manifest 上は file が `after.pages[]` を持つかどうかで page 切替の
    - kicad-cli で SVG 生成
    - `@resvg/resvg-js` で SVG → PNG (in-process)
 4. キャッシュへ保存
-5. before/after の両方がそろったら `pixelmatch` で差分ハイライト PNG
-   を生成 (in-process、いずれの side が欠けていればスキップ)
+5. before/after の両方がそろったら `triColorDiff` で差分ハイライト
+   PNG を生成 (in-process、いずれの side が欠けていればスキップ)
 
 before と after が完了したら manifest に組み立て、HTML / markdown に
 inline する。

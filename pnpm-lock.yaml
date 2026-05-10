@@ -11,9 +11,6 @@ importers:
       '@resvg/resvg-js':
         specifier: ^2.6.2
         version: 2.6.2
-      pixelmatch:
-        specifier: ^7.2.0
-        version: 7.2.0
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0
@@ -27,9 +24,6 @@ importers:
       '@types/node':
         specifier: ^25.6.2
         version: 25.6.2
-      '@types/pixelmatch':
-        specifier: ^5.2.6
-        version: 5.2.6
       '@types/pngjs':
         specifier: ^6.0.5
         version: 6.0.5
@@ -126,9 +120,6 @@ packages:
   '@types/node@25.6.2':
     resolution: {integrity: sha512-sokuT28dxf9JT5Kady1fsXOvI4HVpjZa95NKT5y9PNTIrs2AsobR4GFAA90ZG8M+nxVRLysCXsVj6eGC7Vbrlw==}
 
-  '@types/pixelmatch@5.2.6':
-    resolution: {integrity: sha512-wC83uexE5KGuUODn6zkm9gMzTwdY5L0chiK+VrKcDfEjzxh1uadlWTvOmAbCpnM9zx/Ww3f8uKlYQVnO/TrqVg==, tarball: https://registry.npmjs.org/@types/pixelmatch/-/pixelmatch-5.2.6.tgz}
-
   '@types/pngjs@6.0.5':
     resolution: {integrity: sha512-0k5eKfrA83JOZPppLtS2C7OUtyNAl2wKNxfyYl9Q5g9lPkgBl/9hNyAu6HuEH2J4XmIv2znEpkDd0SaZVxW6iQ==, tarball: https://registry.npmjs.org/@types/pngjs/-/pngjs-6.0.5.tgz}
 
@@ -143,10 +134,6 @@ packages:
   isexe@4.0.0:
     resolution: {integrity: sha512-FFUtZMpoZ8RqHS3XeXEmHWLA4thH+ZxCv2lOiPIn1Xc7CxrqhWzNSDzD+/chS/zbYezmiwWLdQC09JdQKmthOw==}
     engines: {node: '>=20'}
-
-  pixelmatch@7.2.0:
-    resolution: {integrity: sha512-xhcb4yHu9sM/G7foGzoLtXYcC0zHEaOXXjRKhGup0fw78Nf2Tkiapv4EQyMzrbcmQPsllAI7DbFY2UT7PlI9Pg==, tarball: https://registry.npmjs.org/pixelmatch/-/pixelmatch-7.2.0.tgz}
-    hasBin: true
 
   playwright-core@1.59.1:
     resolution: {integrity: sha512-HBV/RJg81z5BiiZ9yPzIiClYV/QMsDCKUyogwH9p3MCP6IYjUFu/MActgYAvK0oWyV9NlwM3GLBjADyWgydVyg==}
@@ -236,10 +223,6 @@ snapshots:
     dependencies:
       undici-types: 7.19.2
 
-  '@types/pixelmatch@5.2.6':
-    dependencies:
-      '@types/node': 25.6.2
-
   '@types/pngjs@6.0.5':
     dependencies:
       '@types/node': 25.6.2
@@ -250,10 +233,6 @@ snapshots:
     optional: true
 
   isexe@4.0.0: {}
-
-  pixelmatch@7.2.0:
-    dependencies:
-      pngjs: 7.0.0
 
   playwright-core@1.59.1: {}
 

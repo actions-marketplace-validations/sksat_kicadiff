@@ -27,9 +27,10 @@ file in your browser, or as a markdown report you can paste into a PR.
   Bun also compiles the standalone binary, so no separate Node install
   is needed for any workflow. Standalone binary users skip this.
 
-The render pipeline (SVG → PNG, pixel diff highlight) used to need
-`rsvg-convert` and ImageMagick; both are now in-process JS
-(`@resvg/resvg-js`, `pixelmatch`).
+The render pipeline (SVG → PNG, tri-colour pixel diff highlight) used to
+need `rsvg-convert` and ImageMagick; both are now in-process
+(`@resvg/resvg-js` for rasterisation, a small custom classifier on top
+of `pngjs` for the diff overlay).
 
 ## Install
 
