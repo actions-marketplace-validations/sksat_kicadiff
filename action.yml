@@ -128,6 +128,37 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+  # ----- Image hosting -----
+  image-host:
+    description: |
+      Where to put rendered images so they're reachable from the PR
+      comment / description as inline <img>:
+        - "artifact" (default): images live only in the build artifact;
+          the comment / description link to it for the rich view.
+        - "same-branch": copy combined before/after PNGs into the PR
+          head branch under `image-host-path`, commit + push them, and
+          embed `<img>` tags in the comment / description / job summary
+          via raw.githubusercontent.com so they render inline. Requires
+          contents: write on the workflow. Falls back to "artifact"
+          (with ::warning::) for fork PRs since GITHUB_TOKEN can't
+          push to forks.
+    required: false
+    default: "artifact"
+  image-host-path:
+    description: |
+      Project-relative directory where same-branch images are committed.
+      Honoured only when image-host is "same-branch".
+    required: false
+    default: "assets/kicadiff-preview"
+  image-host-commit-message:
+    description: |
+      Commit message for the auto-pushed image update. The action also
+      uses this as a marker to detect its own commits and skip the
+      heavy work on the synchronize event that the push triggers — so
+      changing it across runs would defeat the loop guard.
+    required: false
+    default: "chore(kicadiff): update preview images"
+
 outputs:
   markdown-path:
     description: Path to the generated markdown report (with image links).
@@ -153,9 +184,32 @@ outputs:
 runs:
   using: composite
   steps:
+    # Loop guard for image-host=same-branch. Pushing preview-image
+    # commits back to the PR branch fires another `pull_request`
+    # (synchronize) event, which would re-run the whole pipeline. The
+    # paths filter doesn't help — it evaluates the PR's overall diff
+    # against base, not the latest push, so the workflow re-fires even
+    # when the new commit only touches images. Detecting our own
+    # commit message and short-circuiting is the cheapest way out.
+    - name: Skip if last commit was a kicadiff preview update
+      id: skip-check
+      shell: bash
+      env:
+        MARKER: ${{ inputs.image-host-commit-message }}
+      run: |
+        set -eu
+        msg=$(git log -1 --format=%B 2>/dev/null || echo "")
+        if [ -n "$MARKER" ] && [ "${msg%$'\n'}" = "$MARKER" ]; then
+          echo "::notice::Last commit is a kicadiff preview update — skipping rerender."
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        fi
+
     # Bun is needed both as the kicadiff CLI runtime (its shebang is
     # `#!/usr/bin/env bun`) and to run `bunx` if install-kicadiff != skip.
     - name: Setup Bun
+      if: ${{ steps.skip-check.outputs.skip != 'true' }}
       uses: oven-sh/setup-bun@v2.2.0
       with:
         bun-version: latest
@@ -165,7 +219,7 @@ runs:
     # per-layer PCB render flag. Skip when kicad-version is empty so a
     # caller can pre-install it differently (e.g. nix, brew, custom image).
     - name: Install KiCad
-      if: ${{ inputs.kicad-version != '' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.kicad-version != '' }}
       shell: bash
       run: |
         set -eux
@@ -176,6 +230,7 @@ runs:
 
     - name: Resolve refs and run kicadiff
       id: run
+      if: ${{ steps.skip-check.outputs.skip != 'true' }}
       shell: bash
       env:
         INPUT_PATH: ${{ inputs.path }}
@@ -250,7 +305,7 @@ runs:
     # to "just work" without forcing every caller to pass it.
     - name: Resolve artifact name
       id: artifact-name
-      if: ${{ inputs.upload-artifact == 'true' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.upload-artifact == 'true' }}
       shell: bash
       env:
         EXPLICIT_NAME: ${{ inputs.artifact-name }}
@@ -268,13 +323,101 @@ runs:
 
     - name: Upload artifact
       id: upload
-      if: ${{ inputs.upload-artifact == 'true' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.upload-artifact == 'true' }}
       uses: actions/upload-artifact@v5.0.0
       with:
         name: ${{ steps.artifact-name.outputs.name }}
         path: ${{ steps.run.outputs.output-dir }}
         retention-days: ${{ inputs.artifact-retention-days }}
         if-no-files-found: warn
+
+    # ----- Optional: same-branch image hosting -----
+    # Copies combined before/after PNGs into the project tree at
+    # `image-host-path`, commits + pushes them on the PR head branch,
+    # and exports the raw.githubusercontent.com base URL so the body
+    # / summary composer can build inline <img> references.
+    #
+    # Outputs:
+    #   skipped         "true" when same-branch wasn't used or fell
+    #                   back (fork PR / no images to push).
+    #   image-base-url  https URL ending in /<image-host-path> at the
+    #                   most recent SHA carrying the images. Empty
+    #                   when skipped.
+    - name: Stage and push same-branch images
+      id: same-branch
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.image-host == 'same-branch' }}
+      shell: bash
+      env:
+        OUT_DIR: ${{ steps.run.outputs.output-dir }}
+        DEST_REL: ${{ inputs.image-host-path }}
+        COMMIT_MSG: ${{ inputs.image-host-commit-message }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        BASE_REPO: ${{ github.repository }}
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -eu
+
+        # Fork detection. GITHUB_TOKEN can't push to a fork branch, so
+        # the only safe behaviour is to fall back to the artifact path
+        # and tell the user. Empty HEAD_REPO means we're outside a PR
+        # context entirely, in which case there's no branch to push to
+        # — same outcome.
+        if [ -z "$HEAD_REPO" ] || [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+          echo "::warning::image-host=same-branch isn't usable for this run (HEAD repo: ${HEAD_REPO:-<none>}, base repo: $BASE_REPO). Falling back to artifact-only image hosting."
+          echo "skipped=true" >> "$GITHUB_OUTPUT"
+          echo "image-base-url=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Wipe and repopulate so deleted KiCad files surface as deletions
+        # in the preview directory too. Only touches *.png at the top
+        # level — sibling docs / READMEs in the same dir survive.
+        mkdir -p "$DEST_REL"
+        find "$DEST_REL" -maxdepth 1 -type f -name '*.png' -delete
+
+        # kicadiff writes per-side combined PNGs at <out>/{before,after}/<safe>.png.
+        # We pair them up and emit <safe>-{before,after}.png in DEST_REL.
+        if [ -d "$OUT_DIR/after" ]; then
+          for src in "$OUT_DIR"/after/*.png; do
+            [ -f "$src" ] || continue
+            name=$(basename "$src" .png)
+            cp "$src" "$DEST_REL/$name-after.png"
+            before_src="$OUT_DIR/before/$name.png"
+            if [ -f "$before_src" ]; then
+              cp "$before_src" "$DEST_REL/$name-before.png"
+            fi
+          done
+        fi
+
+        # Stage and check whether anything actually changed.
+        git add "$DEST_REL"
+        if git diff --cached --quiet; then
+          # Nothing new — but the existing committed images in this
+          # path are still valid for raw URLs at the current HEAD.
+          echo "No image changes to commit."
+          NEW_SHA=$(git rev-parse HEAD)
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+          echo "image-base-url=https://raw.githubusercontent.com/$BASE_REPO/$NEW_SHA/$DEST_REL" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Bot identity for the auto-commit. The 41898282 user-id +
+        # noreply email is GitHub's recommended pattern for the
+        # github-actions[bot] account when committing from CI.
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]"
+        git commit -m "$COMMIT_MSG"
+
+        # Push to the PR head branch via the token-authenticated remote
+        # URL. Don't reuse the existing `origin` remote in case it was
+        # set up as ssh; we always want HTTPS + token here.
+        push_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${BASE_REPO}.git"
+        git push "$push_url" "HEAD:$HEAD_REF"
+
+        NEW_SHA=$(git rev-parse HEAD)
+        echo "skipped=false" >> "$GITHUB_OUTPUT"
+        echo "image-base-url=https://raw.githubusercontent.com/$BASE_REPO/$NEW_SHA/$DEST_REL" >> "$GITHUB_OUTPUT"
 
     # ----- Optional: write the report into the run-page summary -----
     # Inlines combined before/after PNGs as base64 data URIs so reviewers
@@ -284,7 +427,7 @@ runs:
     # the remaining images, emit ::warning::, and tell the reader to
     # check the artifact for the full set.
     - name: Write job summary
-      if: ${{ inputs.job-summary == 'true' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.job-summary == 'true' }}
       shell: bash
       env:
         MD_PATH: ${{ steps.run.outputs.markdown-path }}
@@ -292,6 +435,7 @@ runs:
         HAS_CHANGES: ${{ steps.run.outputs.has-changes }}
         OUT_DIR: ${{ steps.run.outputs.output-dir }}
         ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        IMAGE_BASE_URL: ${{ steps.same-branch.outputs.image-base-url }}
       run: |
         set -eu
 
@@ -316,27 +460,37 @@ runs:
           fi
         } >> "$TMP"
 
-        # ----- Inline before/after combined PNGs as data URIs -----
-        # kicadiff writes per-side combined PNGs at <out>/before/<safe>.png
-        # and <out>/after/<safe>.png. We pair them up by basename and emit
-        # one row per file as a 2-column markdown table.
+        # ----- Embed before/after combined PNGs -----
+        # When same-branch image hosting is in play we emit raw.gh URLs
+        # (small markdown, no per-image budget pressure). Otherwise we
+        # base64-inline the PNGs as data URIs and watch the budget.
+        # Either way, kicadiff writes per-side combined PNGs at
+        # <out>/{before,after}/<safe>.png — we pair them up by basename
+        # and emit one row per file as a 2-column markdown table.
         SKIPPED=0
         TOTAL=0
         if [ -d "$OUT_DIR/after" ]; then
-          # Iterate over after-side combined PNGs; pair with before by name.
-          # Sort so the order stays deterministic across runs.
           for after_png in $(find "$OUT_DIR/after" -maxdepth 1 -type f -name '*.png' | sort); do
             TOTAL=$((TOTAL + 1))
             name="$(basename "$after_png" .png)"
             before_png="$OUT_DIR/before/$name.png"
 
-            after_b64="$(base64 -w0 "$after_png")"
-            after_uri="data:image/png;base64,$after_b64"
-            if [ -f "$before_png" ]; then
-              before_b64="$(base64 -w0 "$before_png")"
-              before_uri="data:image/png;base64,$before_b64"
+            if [ -n "${IMAGE_BASE_URL:-}" ]; then
+              after_uri="$IMAGE_BASE_URL/$name-after.png"
+              if [ -f "$before_png" ]; then
+                before_uri="$IMAGE_BASE_URL/$name-before.png"
+              else
+                before_uri=""
+              fi
             else
-              before_uri=""
+              after_b64="$(base64 -w0 "$after_png")"
+              after_uri="data:image/png;base64,$after_b64"
+              if [ -f "$before_png" ]; then
+                before_b64="$(base64 -w0 "$before_png")"
+                before_uri="data:image/png;base64,$before_b64"
+              else
+                before_uri=""
+              fi
             fi
 
             # Compose this entry's markdown into a buffer so we can size
@@ -405,16 +559,19 @@ runs:
         rm -f "$TMP"
 
     # ----- Build the body shared by PR comment + PR description -----
-    # Run unconditionally (cheap) so a caller flipping pr-comment on
-    # mid-run doesn't have to also flip a separate compose flag.
+    # Inline `<img>` references are emitted only when same-branch
+    # hosting handed us a raw-URL base; otherwise we keep images in
+    # the artifact and rely on the link.
     - name: Compose PR body
       id: body
-      if: ${{ inputs.pr-comment == 'true' || inputs.pr-description == 'true' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && (inputs.pr-comment == 'true' || inputs.pr-description == 'true') }}
       shell: bash
       env:
         TXT_PATH: ${{ steps.run.outputs.text-path }}
+        OUT_DIR: ${{ steps.run.outputs.output-dir }}
         HAS_CHANGES: ${{ steps.run.outputs.has-changes }}
         ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        IMAGE_BASE_URL: ${{ steps.same-branch.outputs.image-base-url }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         set -eu
@@ -435,6 +592,31 @@ runs:
             echo "**Full report with images:** [download artifact]($ARTIFACT_URL)"
           fi
           echo
+
+          # Inline before/after thumbnails when same-branch is wired up.
+          # Without an image base URL we'd have to either base64-embed
+          # (bloats the comment past GitHub's truncation point) or skip
+          # — skipping is the documented behaviour.
+          if [ -n "${IMAGE_BASE_URL:-}" ] && [ -d "$OUT_DIR/after" ]; then
+            for after_png in $(find "$OUT_DIR/after" -maxdepth 1 -type f -name '*.png' | sort); do
+              name="$(basename "$after_png" .png)"
+              before_png="$OUT_DIR/before/$name.png"
+              echo
+              echo "### \`$name\`"
+              echo
+              echo "| before | after |"
+              echo "|---|---|"
+              if [ -f "$before_png" ]; then
+                printf '| ![before](%s/%s-before.png) | ![after](%s/%s-after.png) |\n' \
+                  "$IMAGE_BASE_URL" "$name" "$IMAGE_BASE_URL" "$name"
+              else
+                printf '| _(new file)_ | ![after](%s/%s-after.png) |\n' \
+                  "$IMAGE_BASE_URL" "$name"
+              fi
+            done
+            echo
+          fi
+
           if [ -s "$TXT_PATH" ]; then
             echo '<details><summary>Structural diff</summary>'
             echo
@@ -458,7 +640,7 @@ runs:
     # in place; otherwise post a fresh one. Avoids comment spam on
     # successive pushes.
     - name: Upsert sticky PR comment
-      if: ${{ inputs.pr-comment == 'true' && github.event.pull_request.number != '' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.pr-comment == 'true' && github.event.pull_request.number != '' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -484,7 +666,7 @@ runs:
     # python here-doc avoids shell-quoting hell for multi-line bodies
     # that may contain backticks, dollar signs, etc.
     - name: Upsert PR description section
-      if: ${{ inputs.pr-description == 'true' && github.event.pull_request.number != '' }}
+      if: ${{ steps.skip-check.outputs.skip != 'true' && inputs.pr-description == 'true' && github.event.pull_request.number != '' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}

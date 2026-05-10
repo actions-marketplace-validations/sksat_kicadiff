@@ -27,10 +27,11 @@ on:
       - "action.yml"
       - ".github/workflows/kicad-pr-diff.yml"
 
-# Sticky-comment + description editing both mutate PR data, so the job
-# needs write access to pull-requests. Contents stays read.
+# Sticky-comment + description editing mutate PR data; image-host:
+# same-branch additionally pushes auto-generated PNG previews back to
+# the PR head branch, which needs contents: write.
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 # Coalesce successive pushes to the same PR so we only render the latest
@@ -96,3 +97,9 @@ jobs:
           upload-artifact: "true"
           pr-comment: "true"
           pr-description: "true"
+          # Push rendered PNGs to the PR head branch under
+          # assets/kicadiff-preview/ and reference them via
+          # raw.githubusercontent.com from the comment / description /
+          # job summary, so reviewers see the images inline without
+          # downloading the artifact.
+          image-host: same-branch
