@@ -502,9 +502,15 @@ runs:
         import os, re, sys
         current = os.environ.get("CURRENT_BODY", "")
         new = os.environ["NEW_SECTION"]
+        # Anchor both markers at line start. Without re.MULTILINE the
+        # regex would also grab a marker that the author quoted inside
+        # an inline-code span (`<!-- kicadiff:start -->`), which is a
+        # real footgun for any PR description that documents this
+        # action. Line-anchored matching means only the section we
+        # injected ourselves on a previous run is replaced.
         pattern = re.compile(
-            r"<!-- kicadiff:start -->.*?<!-- kicadiff:end -->",
-            re.DOTALL,
+            r"^<!-- kicadiff:start -->.*?^<!-- kicadiff:end -->",
+            re.DOTALL | re.MULTILINE,
         )
         if pattern.search(current):
             out = pattern.sub(new, current)
