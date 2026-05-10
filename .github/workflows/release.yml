@@ -2,9 +2,10 @@ name: Release
 
 # Tag-driven release: pushing a `vX.Y.Z` tag triggers a build of the
 # standalone binaries for every supported target and uploads them to a
-# GitHub Release. Together with `npm publish` (still manual), this gives
-# users two install paths: `bunx kicadiff` for npm consumers, or the
-# release binary + install.sh for "kicad-cli only" environments.
+# GitHub Release. The npm publish (run manually from a maintainer
+# machine via `pnpm publish`) is what makes `bunx kicadiff` and
+# `pnpm add -g kicadiff` work; this workflow only covers the binary
+# release + install.sh path.
 on:
   push:
     tags: ['v*.*.*']

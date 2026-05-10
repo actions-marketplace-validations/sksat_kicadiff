@@ -41,9 +41,9 @@ KiCad プロジェクト用の visual diff ツール。`.kicad_pcb` /
 # 1. Bun の package runner で 1 ショット実行 (インストール不要)
 bunx kicadiff [args...]
 
-# 2. npm 系のグローバルインストール (`kicadiff` が PATH に入る)
-npm install -g kicadiff
-# pnpm / bun add -g でも可
+# 2. グローバルインストール (`kicadiff` が PATH に入る)
+pnpm add -g kicadiff
+# `bun add -g kicadiff` / `npm install -g kicadiff` でも可
 
 # 3. standalone binary。1 ファイル、Bun runtime 不要。
 #    ~/.local/bin に `kicadiff` を配置 (KICADIFF_INSTALL_DIR で上書き可)。

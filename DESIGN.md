@@ -31,7 +31,7 @@ vs 作業ツリーなど) の差分を、人間が視覚的に確認できる形
 | ~~`magick compare`~~ | 自前の tri-color 分類器 (`pngjs` 上) で置換     |
 
 `bun build --compile` で作る standalone binary は kicad-cli さえ手元に
-あれば動く 1 ファイル配布。`bunx` / `npm install -g` 系も Bun 1 つ
+あれば動く 1 ファイル配布。`bunx` / `pnpm add -g` 系も Bun 1 つ
 + kicad-cli で完結する (ランタイムから外部コマンドを呼ばない)。
 
 ## アーキテクチャ概観

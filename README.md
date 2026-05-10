@@ -40,9 +40,9 @@ Three ways depending on what's already on your machine:
 # 1. One-shot via Bun's package runner (no install)
 bunx kicadiff [args...]
 
-# 2. npm-style install (puts `kicadiff` on PATH)
-npm install -g kicadiff
-# or with pnpm / bun add -g
+# 2. Global install (puts `kicadiff` on PATH)
+pnpm add -g kicadiff
+# or with `bun add -g kicadiff` / `npm install -g kicadiff`
 
 # 3. Standalone binary — single file, no Bun runtime needed.
 #    Drops `kicadiff` into ~/.local/bin (override with KICADIFF_INSTALL_DIR).
